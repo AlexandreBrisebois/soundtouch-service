@@ -1,0 +1,40 @@
+# SoundTouch Sleep Timer Checklist
+
+This is an independent, component-based breakdown of the steps required to build the SoundTouch sleep timer app. Each module can be built and tested individually.
+
+- [X] **Phase 1: Project Setup & Research**
+  - [X] Cloned existing repo to `soundtouch-service` as the working directory.
+  - [X] Set up a virtual environment and generate `requirements.txt`.
+  - [X] Review Bose SoundTouch Web API documentation for device discovery, state retrieval, and control commands.
+
+- [X] **Phase 2: API Verification Test (`test_api.py`)**
+  - [X] Create `test_api.py` to ensure commands to the speaker work effectively based on the referenced SoundTouch documentation.
+  - [X] Program it to discover the "Living Room" speaker, set volume to 20%, run Preset 1, wait 20 seconds, and turn it off.
+
+- [X] **Phase 3: Network Discovery Module (`discovery.py`)**
+  - [X] Implement local network discovery (likely using `zeroconf` for mDNS Bonjour broadcasting).
+  - [X] Create a function that returns a list of discovered SoundTouch device IP addresses and names.
+  - [X] Test the script locally to confirm it successfully registers the speakers on the network.
+
+- [X] **Phase 4: Status Query Module (`status.py`)**
+  - [X] Implement a function to query a specific speaker's current power/playback state via `GET /now_playing`.
+  - [X] Parse the XML response to definitively conclude if the speaker is "OFF" or currently playing media.
+
+- [X] **Phase 5: Power Control Module (`control.py`)**
+  - [X] Implement a function to send a `STOP` key press to ensure music stops.
+  - [X] Implement a function to send a `POWER` key press sequentially afterwards to turn the speaker off.
+  - [X] Verify both functions correctly construct necessary POST requests (`POST /key`).
+
+- [X] **Phase 6: Main Orchestration, Scheduling, and API (`main.py`)**
+  - [X] Implement the overarching orchestrator: Fetch IPs -> Check Status -> Halt/Power Off if active.
+  - [X] Integrate a scheduler (e.g. `schedule` library) to run in a background thread for predefined operations.
+  - [X] Expose a lightweight API (using a framework like Flask or FastAPI) with endpoints to manually power off or play a preset.
+  - [X] Add basic logging (to stdout) to ensure activities are observable in Docker logs.
+
+- [X] **Phase 7: Containerization for Synology**
+  - [X] Write a minimal `Dockerfile` based on `python:3-alpine` to keep the footprint as small as possible.
+  - [X] Test building the Docker image and confirm the image size is suitably small.
+  - [X] Document instructions on how and where to inject environment variables (like the scheduled time) so it can be deployed on a Synology NAS.
+
+- [X] **Phase 8: Documentation**
+  - [X] Create a minimal `README.md` containing setup, deployment instructions, and referencing the official [Bose SoundTouch Web API documentation](https://assets.bosecreative.com/m/496577402d128874/original/SoundTouch-Web-API.pdf).

@@ -1,0 +1,38 @@
+### VS Code REST Client Variables
+@baseUrl = http://localhost:5000
+@speakerName = Target Speaker 1
+
+### ------------------------------------------------------------------------
+### General Endpoints
+### ------------------------------------------------------------------------
+
+### Check Service Root & Current Dynamic Configuration
+GET {{baseUrl}}/
+
+### Discover All SoundTouch Speakers on the Local Network
+GET {{baseUrl}}/api/discover
+
+### ------------------------------------------------------------------------
+### Speaker-Specific Endpoints
+### (Requires speaker to be present and successfully discovered over mDNS)
+### ------------------------------------------------------------------------
+
+### Get Current Status of the Speaker
+GET {{baseUrl}}/api/{{speakerName}}/status
+
+### Toggle Power State
+POST {{baseUrl}}/api/{{speakerName}}/power
+
+### Set Volume to 20%
+POST {{baseUrl}}/api/{{speakerName}}/volume
+Content-Type: application/json
+
+{
+    "volume": 20
+}
+
+### Play Preset 1
+POST {{baseUrl}}/api/{{speakerName}}/preset/1
+
+### Play Preset 2
+POST {{baseUrl}}/api/{{speakerName}}/preset/2
