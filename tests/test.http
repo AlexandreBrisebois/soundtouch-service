@@ -13,6 +13,28 @@ GET {{baseUrl}}/
 GET {{baseUrl}}/api/discover
 
 ### ------------------------------------------------------------------------
+### Schedules API
+### ------------------------------------------------------------------------
+
+### Get All Schedules
+GET {{baseUrl}}/api/schedules
+
+### Add or Update a Schedule
+POST {{baseUrl}}/api/{{speakerName}}/schedules
+Content-Type: application/json
+
+{
+    "name": "Test Routine",
+    "on_time": "08:00",
+    "off_time": "09:00",
+    "preset": 3,
+    "volume": 15
+}
+
+### Delete a Schedule
+DELETE {{baseUrl}}/api/{{speakerName}}/schedules/Test Routine
+
+### ------------------------------------------------------------------------
 ### Speaker-Specific Endpoints
 ### (Requires speaker to be present and successfully discovered over mDNS)
 ### ------------------------------------------------------------------------

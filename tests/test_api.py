@@ -67,4 +67,30 @@ if __name__ == "__main__":
         
         print("Turning off (sending POWER)...")
         send_key(ip, "POWER")
-        print("Test script finished.")
+
+    print("\n--- Testing Local Flask API (if running on port 5000) ---")
+    try:
+        req = requests.get("http://localhost:5000/api/schedules", timeout=2)
+        print("GET /api/schedules :")
+        print(req.json())
+        
+        print("\nPOST /api/schedules - Adding 'Test Routine'...")
+        res = requests.post(f"http://localhost:5000/api/{target}/schedules", json={
+            "name": "Test Routine",
+            "on_time": "12:00",
+            "off_time": "13:00",
+            "preset": 1,
+            "volume": 20
+        }, timeout=2)
+        print(res.json())
+        
+        time.sleep(1) # wait for IO thread
+        
+        print("\nDELETE /api/schedules - Removing 'Test Routine'...")
+        res = requests.delete(f"http://localhost:5000/api/{target}/schedules/Test Routine", timeout=2)
+        print(res.json())
+
+    except requests.exceptions.RequestException:
+        print("Flask API not running or unreachable on port 5000. Skipping API tests.")
+        
+    print("Test script finished.")

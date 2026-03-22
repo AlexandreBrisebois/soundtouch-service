@@ -1,4 +1,18 @@
 {
-    "Target Speaker 1": "22:30",
-    "Target Speaker 2": "20:00"
+  "Target Speaker 1": [
+    {
+      "name": "Morning Routine",
+      "on_time": "06:15",
+      "off_time": "07:30",
+      "preset": 1,
+      "volume": 10
+    },
+    {
+      "name": "Evening Routine",
+      "on_time": "20:00",
+      "off_time": "21:30",
+      "preset": 2,
+      "volume": 20
+    }
+  ]
 }

@@ -1,10 +1,21 @@
 import os
 from flask import Flask
+from flasgger import Swagger
 from app.api.routes import api_bp
 from app.scheduler import jobs
 
 def create_app():
     app_instance = Flask(__name__)
+    
+    # Initialize OpenAPI specification and Swagger UI on /apidocs/
+    Swagger(app_instance, template={
+        "info": {
+            "title": "SoundTouch Service API",
+            "description": "API for discovering, controlling, and scheduling SoundTouch speakers.",
+            "version": "1.0.0"
+        }
+    })
+    
     app_instance.register_blueprint(api_bp)
     
     # Start the background dynamic scheduler as a daemon thread

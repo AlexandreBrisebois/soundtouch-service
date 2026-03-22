@@ -38,3 +38,19 @@ This is an independent, component-based breakdown of the steps required to build
 
 - [X] **Phase 8: Documentation**
   - [X] Create a minimal `README.md` containing setup, deployment instructions, and referencing the official [Bose SoundTouch Web API documentation](https://assets.bosecreative.com/m/496577402d128874/original/SoundTouch-Web-API.pdf).
+
+- [X] **Phase 9: Flexible Scheduling Feature**
+  - [X] Implement new config schema that supports multiple named schedules per speaker.
+  - [X] Support `on_time` with specified preset and volume, and `off_time`.
+  - [X] Update background scheduler to parse and handle schedules, avoiding toggling OFF if already ON during `on_time`.
+  - [X] Implement a `queue.Queue` background thread in `app/scheduler/jobs.py` to handle thread-safe configuration file writes.
+  - [X] Update `config.json` and `deployment/config.json` templates to match the new syntax.
+  - [X] Implement tests/validation for the new logic to ensure existing behavior is uninterrupted.
+
+- [X] **Phase 10: API & Documentation Enhancements**
+  - [X] Add `flasgger` to `requirements.txt` and initialize it in `app/main.py`.
+  - [X] Create API routes in `app/api/routes.py` to GET, POST (add/update), and DELETE schedules.
+  - [X] Integrate the new API routes with the configuration IO Queue to prevent deadlocks.
+  - [X] Add Flasgger docstrings to all API endpoints for OpenAPI discoverability.
+  - [X] Update `tests/test.http` with the new schedule CRUD endpoints.
+  - [X] Update `tests/test_api.py` with cases targeting the new endpoints.

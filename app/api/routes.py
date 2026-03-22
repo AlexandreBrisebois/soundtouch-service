@@ -1,20 +1,144 @@
 from flask import Blueprint, jsonify, request
 from app.core import discovery, status, control
-from app.scheduler.jobs import load_config
+from app.scheduler import jobs
 
 api_bp = Blueprint('api', __name__)
 
 @api_bp.route("/", methods=["GET"])
 def api_root():
-    return jsonify({"service": "SoundTouch-Service", "config": load_config()})
+    """
+    Service Root Endpoint
+    Returns general metadata about the service.
+    ---
+    responses:
+      200:
+        description: Returns service name and current memory configuration.
+    """
+    return jsonify({"service": "SoundTouch-Service", "config": jobs.get_current_config()})
+
+@api_bp.route("/api/schedules", methods=["GET"])
+def api_get_schedules():
+    """
+    Get all schedules
+    Retrieve the current schedules configured for all SoundTouch speakers.
+    ---
+    responses:
+      200:
+        description: A dictionary of speakers mapping to a list of schedules.
+    """
+    return jsonify(jobs.get_current_config())
+
+@api_bp.route("/api/<speaker_name>/schedules", methods=["POST"])
+def api_add_schedule(speaker_name):
+    """
+    Add or Update a Schedule
+    Push a new schedule or update an existing schedule by name for the given speaker. 
+    ---
+    parameters:
+      - in: path
+        name: speaker_name
+        type: string
+        required: true
+        description: The precise broadcast name of the SoundTouch speaker
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          properties:
+            name:
+              type: string
+              example: "Morning Routine"
+            on_time:
+              type: string
+              example: "06:15"
+            off_time:
+              type: string
+              example: "07:30"
+            preset:
+              type: integer
+              example: 1
+            volume:
+              type: integer
+              example: 10
+    responses:
+      202:
+        description: Schedule update is accepted and queued for IO processing.
+    """
+    data = request.json
+    if not data or "name" not in data:
+        return jsonify({"error": "Missing schedule 'name' in request body."}), 400
+        
+    jobs.config_queue.put({
+        "action": "add_update",
+        "speaker": speaker_name,
+        "schedule_name": data["name"],
+        "data": data
+    })
+    
+    return jsonify({"message": f"Schedule '{data['name']}' queued for processing on '{speaker_name}'"}), 202
+
+@api_bp.route("/api/<speaker_name>/schedules/<schedule_name>", methods=["DELETE"])
+def api_delete_schedule(speaker_name, schedule_name):
+    """
+    Delete a Schedule
+    Remove a schedule from a specific speaker by its exact name.
+    ---
+    parameters:
+      - in: path
+        name: speaker_name
+        type: string
+        required: true
+        description: The precise broadcast name of the SoundTouch speaker
+      - in: path
+        name: schedule_name
+        type: string
+        required: true
+        description: The name of the routine to delete
+    responses:
+      202:
+        description: Deletion request is accepted and queued for IO processing.
+    """
+    jobs.config_queue.put({
+        "action": "delete",
+        "speaker": speaker_name,
+        "schedule_name": schedule_name
+    })
+    
+    return jsonify({"message": f"Delete request for schedule '{schedule_name}' queued for processing on '{speaker_name}'"}), 202
+
 
 @api_bp.route("/api/discover", methods=["GET"])
 def api_discover():
+    """
+    Discover SoundTouch Speakers
+    Perform a mDNS zero-configuration broadcast to find all local speakers on the network.
+    ---
+    responses:
+      200:
+        description: A list of discovered devices containing their names and IP addresses.
+    """
     devices = discovery.discover_systems(timeout=3)
     return jsonify(devices)
 
 @api_bp.route("/api/<speaker_name>/status", methods=["GET"])
 def api_status(speaker_name):
+    """
+    Get Speaker Status
+    Query a device to see what it is currently playing or if it is in STANDBY.
+    ---
+    parameters:
+      - in: path
+        name: speaker_name
+        type: string
+        required: true
+        description: The broadcast name of the SoundTouch speaker
+    responses:
+      200:
+        description: Status successfully retrieved.
+      404:
+        description: Speaker not found on the local network.
+    """
     devices = discovery.discover_systems(timeout=3)
     for d in devices:
         if d['name'] == speaker_name:
@@ -24,6 +148,22 @@ def api_status(speaker_name):
 
 @api_bp.route("/api/<speaker_name>/power", methods=["POST"])
 def api_power(speaker_name):
+    """
+    Toggle Speaker Power
+    Toggles the power state of the speaker. Note that SoundTouch APIs only offer a power toggle.
+    ---
+    parameters:
+      - in: path
+        name: speaker_name
+        type: string
+        required: true
+        description: The broadcast name of the SoundTouch speaker
+    responses:
+      200:
+        description: Power signal successfully sent.
+      404:
+        description: Speaker not found on the local network.
+    """
     devices = discovery.discover_systems(timeout=3)
     for d in devices:
         if d['name'] == speaker_name:
@@ -33,6 +173,27 @@ def api_power(speaker_name):
 
 @api_bp.route("/api/<speaker_name>/preset/<int:preset_id>", methods=["POST"])
 def api_preset(speaker_name, preset_id):
+    """
+    Play Speaker Preset
+    Triggers one of the 6 numeric preset shortcut buttons on the speaker.
+    ---
+    parameters:
+      - in: path
+        name: speaker_name
+        type: string
+        required: true
+        description: The broadcast name of the SoundTouch speaker
+      - in: path
+        name: preset_id
+        type: integer
+        required: true
+        description: Preset 1-6
+    responses:
+      200:
+        description: Preset signal successfully sent.
+      404:
+        description: Speaker not found on the local network.
+    """
     devices = discovery.discover_systems(timeout=3)
     for d in devices:
         if d['name'] == speaker_name:
@@ -42,6 +203,31 @@ def api_preset(speaker_name, preset_id):
 
 @api_bp.route("/api/<speaker_name>/volume", methods=["POST"])
 def api_volume(speaker_name):
+    """
+    Set Speaker Volume
+    Sets the volume level from 0 to 100 on the specified network speaker.
+    ---
+    parameters:
+      - in: path
+        name: speaker_name
+        type: string
+        required: true
+        description: The broadcast name of the SoundTouch speaker
+      - in: body
+        name: body
+        required: false
+        schema:
+          type: object
+          properties:
+            volume:
+              type: integer
+              example: 20
+    responses:
+      200:
+        description: Volume level successfully sent.
+      404:
+        description: Speaker not found on the local network.
+    """
     data = request.json
     vol = data.get("volume", 20) if data else 20
     devices = discovery.discover_systems(timeout=3)
