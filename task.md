@@ -54,3 +54,9 @@ This is an independent, component-based breakdown of the steps required to build
   - [X] Add Flasgger docstrings to all API endpoints for OpenAPI discoverability.
   - [X] Update `tests/test.http` with the new schedule CRUD endpoints.
   - [X] Update `tests/test_api.py` with cases targeting the new endpoints.
+
+- [X] **Phase 11: CI/CD Pipeline**
+  - [X] Design a GitHub Actions workflow YAML file for building and pushing the Docker image.
+  - [X] Configure action securely mapping Docker Hub credentials (`DOCKER_USERNAME`, `DOCKER_PASSWORD`) using GitHub Secrets.
+  - [X] Configure trigger natively for Semantic Versioning tags (e.g. `v1.0.0`).
+  - [X] Extract Git tag dynamically and apply it as the Docker image tag (and `latest`) during the push phase.
