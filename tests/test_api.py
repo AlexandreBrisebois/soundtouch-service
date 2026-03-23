@@ -1,6 +1,7 @@
 import time
 import socket
 import requests
+import os
 from zeroconf import ServiceBrowser, Zeroconf
 
 class MyListener:
@@ -68,30 +69,51 @@ if __name__ == "__main__":
         print("Turning off (sending POWER)...")
         send_key(ip, "POWER")
 
-    print("\n--- Testing Local Flask API (if running on port 5000) ---")
+    print("\n--- Testing Local Flask API ---")
+    port = int(os.environ.get("PORT", 5005))
+    base_url = f"http://localhost:{port}"
     try:
-        req = requests.get("http://localhost:5000/api/schedules", timeout=2)
-        print("GET /api/schedules :")
+        req = requests.get(f"{base_url}/api/schedules", timeout=2)
+        print(f"GET {base_url}/api/schedules :")
         print(req.json())
         
-        print("\nPOST /api/schedules - Adding 'Test Routine'...")
-        res = requests.post(f"http://localhost:5000/api/{target}/schedules", json={
+        print(f"\nPOST {base_url}/api/{target}/schedules - Adding 'Test Routine'...")
+        res = requests.post(f"{base_url}/api/{target}/schedules", json={
             "name": "Test Routine",
             "days": ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"],
             "on_time": "12:00",
             "off_time": "13:00",
             "preset": 1,
-            "volume": 20
+            "volume": 20,
+            "fade_in_duration": 300,
+            "fade_out_duration": 60
+        }, timeout=2)
+        print(res.json())
+
+        print(f"\nPOST {base_url}/api/{target}/schedules - Adding 'AUX Routine'...")
+        res = requests.post(f"{base_url}/api/{target}/schedules", json={
+            "name": "AUX Routine",
+            "days": ["saturday", "sunday"],
+            "on_time": "14:00",
+            "off_time": "15:00",
+            "source": "AUX",
+            "volume": 15,
+            "fade_in_duration": 120,
+            "fade_out_duration": 30
         }, timeout=2)
         print(res.json())
         
         time.sleep(1) # wait for IO thread
         
-        print("\nDELETE /api/schedules - Removing 'Test Routine'...")
-        res = requests.delete(f"http://localhost:5000/api/{target}/schedules/Test Routine", timeout=2)
+        print(f"\nDELETE {base_url}/api/{target}/schedules - Removing 'Test Routine'...")
+        res = requests.delete(f"{base_url}/api/{target}/schedules/Test Routine", timeout=2)
+        print(res.json())
+
+        print(f"\nDELETE {base_url}/api/{target}/schedules - Removing 'AUX Routine'...")
+        res = requests.delete(f"{base_url}/api/{target}/schedules/AUX Routine", timeout=2)
         print(res.json())
 
     except requests.exceptions.RequestException:
-        print("Flask API not running or unreachable on port 5000. Skipping API tests.")
+        print(f"Flask API not running or unreachable on port {port}. Skipping API tests.")
         
     print("Test script finished.")

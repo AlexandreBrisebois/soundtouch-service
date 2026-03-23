@@ -1,5 +1,5 @@
 ### VS Code REST Client Variables
-@baseUrl = http://localhost:5000
+@baseUrl = http://localhost:5005
 @speakerName = Target Speaker 1
 
 ### ------------------------------------------------------------------------
@@ -35,11 +35,31 @@ Content-Type: application/json
     "on_time": "08:00",
     "off_time": "09:00",
     "preset": 3,
-    "volume": 15
+    "volume": 15,
+    "fade_in_duration": 300,
+    "fade_out_duration": 60
+}
+
+### Add or Update an AUX Schedule
+POST {{baseUrl}}/api/{{speakerName}}/schedules
+Content-Type: application/json
+
+{
+    "name": "AUX Routine",
+    "days": ["saturday", "sunday"],
+    "on_time": "14:00",
+    "off_time": "15:00",
+    "source": "AUX",
+    "volume": 10,
+    "fade_in_duration": 120,
+    "fade_out_duration": 30
 }
 
 ### Delete a Schedule
 DELETE {{baseUrl}}/api/{{speakerName}}/schedules/Test Routine
+
+### Delete AUX Schedule
+DELETE {{baseUrl}}/api/{{speakerName}}/schedules/AUX Routine
 
 ### ------------------------------------------------------------------------
 ### Speaker-Specific Endpoints
