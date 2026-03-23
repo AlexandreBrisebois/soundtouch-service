@@ -1,0 +1,1139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Your Speakers</title>
+
+  <!-- iOS PWA -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Speakers">
+  <link rel="apple-touch-icon" sizes="180x180" href="/app-static/icon.png">
+
+  <!-- Android PWA -->
+  <link rel="manifest" href="/app-static/manifest.json">
+  <meta name="theme-color" content="#6A9E8F">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="/app-static/icon.png">
+
+  <!-- Typography -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+
+  <style>
+    /* ─── Design Tokens ──────────────────────────────────────────── */
+    :root {
+      --bg:          #EEF2EE;
+      --surface:     #FFFFFF;
+      --surface-2:   #F5F8F5;
+      --primary:     #6A9E8F;
+      --primary-lt:  #C8DED9;
+      --primary-dk:  #4E7E70;
+      --paused:      #B8B8A8;
+      --paused-bg:   #F0F0EA;
+      --danger:      #B8756A;
+      --danger-lt:   #F0DDD9;
+      --dot-on:      #7EAD8A;
+      --dot-off:     #B0B8B4;
+      --text:        #2C3B35;
+      --text-muted:  #7A8C84;
+      --border:      #DDE5DE;
+      --radius-sm:   10px;
+      --radius:      16px;
+      --radius-lg:   22px;
+      --shadow:      0 2px 12px rgba(44,59,53,.07);
+      --shadow-lg:   0 8px 32px rgba(44,59,53,.13);
+      --transition:  0.22s ease;
+    }
+
+    /* ─── Reset & Base ───────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      height: 100%;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+      overscroll-behavior: none;
+    }
+    button { font-family: inherit; cursor: pointer; border: none; background: none; }
+    input, select { font-family: inherit; }
+
+    /* ─── App Shell ──────────────────────────────────────────────── */
+    #app {
+      max-width: 640px;
+      margin: 0 auto;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+
+    /* ─── Views (screens) ────────────────────────────────────────── */
+    .view {
+      display: none;
+      flex-direction: column;
+      flex: 1;
+      animation: fadeSlideIn var(--transition) both;
+    }
+    .view.active { display: flex; }
+
+    @keyframes fadeSlideIn {
+      from { opacity: 0; transform: translateY(14px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ─── Header ─────────────────────────────────────────────────── */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 20px 10px;
+      position: sticky;
+      top: 0;
+      background: var(--bg);
+      z-index: 10;
+    }
+    .header-title { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; }
+    .header-sub   { font-size: 13px; color: var(--text-muted); margin-top: 2px; }
+    .header-back {
+      display: flex; align-items: center; gap: 4px;
+      font-size: 16px; font-weight: 500; color: var(--primary);
+      padding: 8px 0; min-height: 44px;
+    }
+    .header-back svg { width: 20px; height: 20px; }
+    .icon-btn {
+      width: 40px; height: 40px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--primary); transition: background var(--transition);
+    }
+    .icon-btn:active { background: var(--primary-lt); }
+    .icon-btn svg { width: 22px; height: 22px; }
+
+    /* ─── Scrollable body ────────────────────────────────────────── */
+    .scroll-body { flex: 1; overflow-y: auto; padding: 8px 16px 0; }
+
+    /* ─── Section label ──────────────────────────────────────────── */
+    .section-label {
+      font-size: 11px; font-weight: 600; letter-spacing: 0.8px;
+      text-transform: uppercase; color: var(--text-muted);
+      padding: 16px 4px 8px;
+    }
+
+    /* ─── Speaker card (Hub) ─────────────────────────────────────── */
+    .speaker-card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 16px 18px;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      cursor: pointer;
+      transition: transform var(--transition), box-shadow var(--transition);
+      -webkit-tap-highlight-color: transparent;
+      text-decoration: none;
+      color: inherit;
+    }
+    .speaker-card:active { transform: scale(0.98); box-shadow: var(--shadow-lg); }
+    .status-dot {
+      width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
+      transition: background var(--transition);
+    }
+    .status-dot.on  { 
+      background: var(--dot-on);  
+      box-shadow: 0 0 0 3px rgba(126,173,138,.25);
+      position: relative;
+    }
+    .status-dot.on::after {
+      content: ''; position: absolute; inset: -4px; border-radius: 50%;
+      border: 2px solid var(--dot-on); opacity: 0;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0% { transform: scale(1); opacity: 0.5; }
+      100% { transform: scale(2.2); opacity: 0; }
+    }
+    .status-dot.off { background: var(--dot-off); }
+
+    /* Playing state accent */
+    .speaker-card.playing {
+      border-left: 3.5px solid var(--dot-on);
+      padding-left: 14.5px; /* Adjust for border */
+    }
+
+    .speaker-info { flex: 1; min-width: 0; }
+    .speaker-name { font-size: 16px; font-weight: 600; }
+    .speaker-status { font-size: 13px; color: var(--text-muted); margin-top: 2px; }
+    
+    .schedule-badge {
+      display: inline-block; margin-top: 6px;
+      font-size: 10px; font-weight: 600; color: var(--primary-dk);
+      background: var(--primary-lt); padding: 2px 8px; border-radius: 12px;
+    }
+    .schedule-badge.empty { background: var(--surface-2); color: var(--text-muted); }
+    .chevron { color: var(--text-muted); flex-shrink: 0; }
+    .chevron svg { width: 18px; height: 18px; }
+
+    /* ─── Schedule card (Detail) ─────────────────────────────────── */
+    .schedule-card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      margin-bottom: 10px;
+      overflow: hidden;
+      transition: opacity var(--transition);
+    }
+    .schedule-card.paused { background: var(--paused-bg); }
+    .schedule-card-body { padding: 15px 16px 10px; }
+    .schedule-name {
+      font-size: 15px; font-weight: 600;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .paused-badge {
+      font-size: 10px; font-weight: 600; letter-spacing: 0.5px;
+      text-transform: uppercase; color: var(--paused);
+      background: rgba(184,184,168,.15);
+      padding: 2px 7px; border-radius: 20px;
+    }
+    .schedule-meta { font-size: 12px; color: var(--text-muted); margin-top: 4px; line-height: 1.6; }
+    .schedule-actions {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 12px 12px;
+    }
+    .btn-pause, .btn-resume {
+      flex: 1; padding: 9px 0; border-radius: var(--radius-sm);
+      font-size: 13px; font-weight: 600;
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+      transition: opacity var(--transition), transform var(--transition);
+    }
+    .btn-pause  { background: var(--primary-lt); color: var(--primary-dk); }
+    .btn-resume { background: var(--primary);    color: #fff; }
+    .btn-pause:active, .btn-resume:active { opacity: 0.75; transform: scale(0.97); }
+    .btn-more {
+      width: 36px; height: 36px; border-radius: var(--radius-sm);
+      background: var(--surface-2); color: var(--text-muted);
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; font-size: 18px; font-weight: 700; letter-spacing: 1px;
+      transition: background var(--transition);
+    }
+    .btn-more:active { background: var(--border); }
+
+    /* ─── Add Schedule button ────────────────────────────────────── */
+    .btn-add-schedule {
+      width: 100%; padding: 16px; border-radius: var(--radius);
+      background: var(--surface); border: 2px dashed var(--primary-lt);
+      color: var(--primary); font-size: 15px; font-weight: 600;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      margin-bottom: 10px; transition: background var(--transition);
+    }
+    .btn-add-schedule:active { background: var(--primary-lt); }
+
+    /* ─── Thumb zone bar (Power / Turn Off All) ──────────────────── */
+    .thumb-bar {
+      padding: 12px 16px 16px;
+      padding-bottom: calc(16px + env(safe-area-inset-bottom));
+      background: var(--bg);
+    }
+    .btn-power {
+      width: 100%; padding: 16px; border-radius: var(--radius);
+      font-size: 15px; font-weight: 600;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      transition: opacity var(--transition), transform var(--transition);
+    }
+    .btn-power:active { opacity: 0.8; transform: scale(0.98); }
+    .btn-power-single {
+      background: var(--surface); color: var(--text);
+      border: 1.5px solid var(--border);
+    }
+    .btn-turn-off-all {
+      background: transparent; color: var(--danger);
+      border: 1.5px solid var(--danger);
+    }
+
+    /* ─── Empty state ────────────────────────────────────────────── */
+    .empty-state {
+      text-align: center; padding: 60px 24px;
+      color: var(--text-muted); font-size: 14px; line-height: 1.6;
+    }
+    .empty-state svg { width:48px; height:48px; opacity:.35; margin-bottom:12px; }
+
+    /* ─── Form ───────────────────────────────────────────────────── */
+    .form-body { flex: 1; overflow-y: auto; padding: 8px 16px 0; }
+    .form-group { margin-bottom: 20px; }
+    .form-label {
+      display: block; font-size: 12px; font-weight: 600; letter-spacing: 0.5px;
+      text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px;
+    }
+    .form-input {
+      width: 100%; padding: 13px 14px; border-radius: var(--radius-sm);
+      border: 1.5px solid var(--border); background: var(--surface);
+      font-size: 16px; color: var(--text); outline: none;
+      transition: border-color var(--transition);
+      -webkit-appearance: none; appearance: none;
+    }
+    .form-input:focus { border-color: var(--primary); }
+
+    /* Day pills */
+    .day-chips { display: flex; gap: 7px; flex-wrap: wrap; }
+    .day-quick { display: flex; gap: 7px; margin-bottom: 10px; }
+    .chip-quick {
+      padding: 7px 14px; border-radius: 20px; font-size: 12px; font-weight: 600;
+      border: 1.5px solid var(--border); background: var(--surface); color: var(--text-muted);
+      transition: all var(--transition);
+    }
+    .chip-quick.active { background: var(--primary-lt); border-color: var(--primary); color: var(--primary-dk); }
+    .day-chip {
+      width: calc((100% - 42px) / 7); aspect-ratio: 1;
+      border-radius: 50%; border: 1.5px solid var(--border);
+      background: var(--surface); color: var(--text-muted);
+      font-size: 12px; font-weight: 600;
+      display: flex; align-items: center; justify-content: center;
+      transition: all var(--transition);
+    }
+    .day-chip.active {
+      background: var(--primary); border-color: var(--primary); color: #fff;
+    }
+
+    /* Time row */
+    .time-row { display: flex; gap: 12px; }
+    .time-row .form-group { flex: 1; }
+    input[type="time"] { cursor: pointer; }
+
+    /* Volume slider */
+    .slider-row { display: flex; align-items: center; gap: 12px; }
+    .vol-value {
+      min-width: 30px; text-align: right; font-size: 15px;
+      font-weight: 600; color: var(--primary);
+    }
+    input[type="range"] {
+      flex: 1; -webkit-appearance: none; appearance: none; height: 6px;
+      border-radius: 3px; background: var(--primary-lt); outline: none;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 24px; height: 24px;
+      border-radius: 50%; background: var(--primary);
+      box-shadow: 0 2px 6px rgba(106,158,143,.4); cursor: pointer;
+    }
+
+    /* Preset pills */
+    .preset-pills { display: flex; gap: 8px; }
+    .preset-pill {
+      flex: 1; padding: 10px 0; border-radius: var(--radius-sm);
+      border: 1.5px solid var(--border); background: var(--surface);
+      font-size: 13px; font-weight: 600; color: var(--text-muted);
+      text-align: center; transition: all var(--transition);
+    }
+    .preset-pill.active {
+      background: var(--primary); border-color: var(--primary); color: #fff;
+    }
+
+    /* Fade stepper */
+    .stepper-row { display: flex; align-items: center; justify-content: space-between; }
+    .stepper-label { font-size: 14px; color: var(--text-muted); }
+    .stepper-group { display: flex; align-items: center; gap: 0; }
+    .stepper-btn {
+      width: 38px; height: 38px; border-radius: var(--radius-sm);
+      background: var(--surface-2); color: var(--text);
+      font-size: 20px; font-weight: 300;
+      display: flex; align-items: center; justify-content: center;
+      border: 1.5px solid var(--border);
+      transition: background var(--transition);
+    }
+    .stepper-btn:active { background: var(--primary-lt); }
+    .stepper-val {
+      min-width: 52px; text-align: center;
+      font-size: 15px; font-weight: 600; color: var(--text);
+    }
+
+    /* Save button */
+    .btn-save {
+      width: 100%; padding: 17px; border-radius: var(--radius);
+      background: var(--primary); color: #fff;
+      font-size: 16px; font-weight: 600;
+      transition: opacity var(--transition), transform var(--transition);
+    }
+    .btn-save:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-save:not(:disabled):active { opacity: 0.85; transform: scale(0.98); }
+
+    /* ─── Bottom sheet overlay ────────────────────────────────────── */
+    .overlay {
+      display: none; position: fixed; inset: 0; z-index: 100;
+      background: rgba(44,59,53,.4); backdrop-filter: blur(2px);
+      align-items: flex-end; justify-content: center;
+    }
+    .overlay.show { display: flex; animation: fadeIn .18s ease; }
+    @keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
+    .sheet {
+      width: 100%; max-width: 640px;
+      background: var(--surface); border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+      padding: 12px 16px calc(24px + env(safe-area-inset-bottom));
+      animation: slideUp .22s ease;
+    }
+    @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+    .sheet-handle {
+      width: 40px; height: 4px; border-radius: 2px;
+      background: var(--border); margin: 0 auto 16px;
+    }
+    .sheet-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; text-align: center; }
+    .sheet-sub   { font-size: 13px; color: var(--text-muted); text-align: center; margin-bottom: 20px; }
+    .sheet-btn {
+      width: 100%; padding: 15px; border-radius: var(--radius);
+      font-size: 15px; font-weight: 600; margin-bottom: 8px;
+      transition: opacity var(--transition);
+    }
+    .sheet-btn:active { opacity: 0.75; }
+    .sheet-btn-danger  { background: var(--danger-lt);  color: var(--danger); }
+    .sheet-btn-cancel  { background: var(--surface-2);  color: var(--text-muted); }
+    .sheet-btn-confirm { background: var(--primary);    color: #fff; }
+    .sheet-btn-more    { background: var(--surface-2);  color: var(--text); }
+
+    /* ─── Toast ──────────────────────────────────────────────────── */
+    #toast {
+      position: fixed; bottom: calc(28px + env(safe-area-inset-bottom));
+      left: 50%; transform: translateX(-50%) translateY(20px);
+      background: var(--text); color: #fff;
+      padding: 11px 22px; border-radius: 30px;
+      font-size: 13px; font-weight: 500;
+      opacity: 0; transition: all .3s ease; pointer-events: none;
+      white-space: nowrap; z-index: 200;
+    }
+    #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    /* ─── Splash ─────────────────────────────────────────────────── */
+    #splash {
+      position: fixed; inset: 0; z-index: 999;
+      background: linear-gradient(160deg, #A8C5B5 0%, #7BA7BC 100%);
+      display: flex; align-items: center; justify-content: center;
+      flex-direction: column; transition: opacity .6s ease;
+    }
+    #splash img { width: 110px; height: 110px; border-radius: 26px; box-shadow: var(--shadow-lg); }
+    #splash p { color: #fff; font-size: 14px; font-weight: 500; margin-top: 18px; opacity: .8; letter-spacing: 0.3px; }
+    #splash.hidden { opacity: 0; pointer-events: none; }
+
+    /* ─── Spinner ────────────────────────────────────────────────── */
+    .spinner {
+      width: 24px; height: 24px; border-radius: 50%;
+      border: 2px solid var(--primary-lt);
+      border-top-color: var(--primary);
+      animation: spin .7s linear infinite;
+      margin: 40px auto;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ─── Divider ────────────────────────────────────────────────── */
+    .divider { height: 1px; background: var(--border); margin: 4px 0 12px; }
+
+    /* ─── Responsive (tablet +) ──────────────────────────────────── */
+    @media (min-width: 600px) {
+      .header { padding: 24px 28px 12px; }
+      .scroll-body, .form-body { padding-left: 24px; padding-right: 24px; }
+      .thumb-bar { padding-left: 24px; padding-right: 24px; }
+      .header-title { font-size: 26px; }
+    }
+    @media (min-width: 1024px) {
+      .header-title { font-size: 28px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Splash screen -->
+<div id="splash">
+  <img src="/app-static/icon.png" alt="App icon">
+  <p>Your Speakers</p>
+</div>
+
+<div id="app">
+
+  <!-- ══════════════════════════════════════════════════════════════
+       SCREEN 1: HUB
+  ══════════════════════════════════════════════════════════════════ -->
+  <div id="view-hub" class="view">
+    <div class="header">
+      <div>
+        <div class="header-title">Your Speakers</div>
+        <div class="header-sub" id="hub-greeting">Good afternoon</div>
+      </div>
+      <button class="icon-btn" id="btn-refresh" title="Refresh">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="scroll-body" id="hub-body">
+      <div class="section-label" id="hub-section-label">Speakers</div>
+      <div class="spinner" id="hub-spinner"></div>
+      <div id="speaker-list"></div>
+    </div>
+
+    <div class="thumb-bar">
+      <button class="btn-power btn-turn-off-all" id="btn-all-off">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+        Turn Off All
+      </button>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════
+       SCREEN 2: SPEAKER DETAIL
+  ══════════════════════════════════════════════════════════════════ -->
+  <div id="view-speaker" class="view">
+    <div class="header">
+      <button class="header-back" id="btn-back-hub">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        Speakers
+      </button>
+    </div>
+
+    <div class="scroll-body" id="detail-body">
+      <div id="detail-speaker-header" style="padding: 0 4px 16px">
+        <div style="font-size:20px;font-weight:700" id="detail-speaker-name"></div>
+        <div style="font-size:13px;color:var(--text-muted);margin-top:3px" id="detail-speaker-status"></div>
+      </div>
+
+      <div class="section-label">Schedules</div>
+      <div id="schedule-list"><div class="spinner"></div></div>
+
+      <button class="btn-add-schedule" id="btn-add-schedule">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Add Schedule
+      </button>
+    </div>
+
+    <div class="thumb-bar">
+      <button class="btn-power btn-power-single" id="btn-power-speaker">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+        Power
+      </button>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════
+       SCREEN 3: ADD / EDIT SCHEDULE
+  ══════════════════════════════════════════════════════════════════ -->
+  <div id="view-form" class="view">
+    <div class="header">
+      <button class="header-back" id="btn-back-speaker">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        <span id="form-back-label">Back</span>
+      </button>
+    </div>
+
+    <div class="form-body">
+      <!-- Name -->
+      <div class="form-group">
+        <label class="form-label" for="f-name">Schedule Name</label>
+        <input class="form-input" type="text" id="f-name" placeholder="Morning Routine" maxlength="60">
+      </div>
+
+      <!-- Days -->
+      <div class="form-group">
+        <label class="form-label">Days</label>
+        <div class="day-quick">
+          <button class="chip-quick" data-quick="weekdays">Weekdays</button>
+          <button class="chip-quick" data-quick="weekends">Weekends</button>
+          <button class="chip-quick" data-quick="all">All</button>
+        </div>
+        <div class="day-chips" id="day-chips">
+          <button class="day-chip" data-day="monday">M</button>
+          <button class="day-chip" data-day="tuesday">T</button>
+          <button class="day-chip" data-day="wednesday">W</button>
+          <button class="day-chip" data-day="thursday">T</button>
+          <button class="day-chip" data-day="friday">F</button>
+          <button class="day-chip" data-day="saturday">S</button>
+          <button class="day-chip" data-day="sunday">S</button>
+        </div>
+      </div>
+
+      <!-- Times -->
+      <div class="time-row">
+        <div class="form-group">
+          <label class="form-label" for="f-on">On Time</label>
+          <input class="form-input" type="time" id="f-on" value="06:15">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="f-off">Off Time</label>
+          <input class="form-input" type="time" id="f-off" value="07:30">
+        </div>
+      </div>
+
+      <!-- Volume -->
+      <div class="form-group">
+        <label class="form-label">Volume</label>
+        <div class="slider-row">
+          <input type="range" id="f-volume" min="0" max="100" value="10">
+          <span class="vol-value" id="vol-display">10</span>
+        </div>
+      </div>
+
+      <!-- Preset -->
+      <div class="form-group">
+        <label class="form-label">Preset <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted);font-size:11px">(optional)</span></label>
+        <div class="preset-pills" id="preset-pills">
+          <button class="preset-pill active" data-preset="1">1</button>
+          <button class="preset-pill" data-preset="2">2</button>
+          <button class="preset-pill" data-preset="3">3</button>
+          <button class="preset-pill" data-preset="4">4</button>
+          <button class="preset-pill" data-preset="5">5</button>
+          <button class="preset-pill" data-preset="6">6</button>
+        </div>
+      </div>
+
+      <!-- Fade In -->
+      <div class="form-group">
+        <label class="form-label">Fade In</label>
+        <div class="stepper-row">
+          <span class="stepper-label">Gradually increase volume</span>
+          <div class="stepper-group">
+            <button class="stepper-btn" data-stepper="fade-in" data-dir="-1">−</button>
+            <span class="stepper-val" id="fade-in-display">5 min</span>
+            <button class="stepper-btn" data-stepper="fade-in" data-dir="1">+</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Fade Out -->
+      <div class="form-group">
+        <label class="form-label">Fade Out</label>
+        <div class="stepper-row">
+          <span class="stepper-label">Gradually lower volume</span>
+          <div class="stepper-group">
+            <button class="stepper-btn" data-stepper="fade-out" data-dir="-1">−</button>
+            <span class="stepper-val" id="fade-out-display">1 min</span>
+            <button class="stepper-btn" data-stepper="fade-out" data-dir="1">+</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- spacing before sticky save -->
+      <div style="height: 100px"></div>
+    </div>
+
+    <div class="thumb-bar">
+      <button class="btn-save" id="btn-save" disabled>Save Schedule</button>
+    </div>
+  </div>
+
+</div><!-- #app -->
+
+<!-- ─── Overlays / Sheets ──────────────────────────────────────────── -->
+
+<!-- More menu (per schedule) -->
+<div class="overlay" id="overlay-more">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title" id="more-sheet-name"></div>
+    <button class="sheet-btn sheet-btn-danger" id="sheet-btn-delete">🗑 Delete Schedule</button>
+    <button class="sheet-btn sheet-btn-cancel" id="sheet-btn-more-cancel">Cancel</button>
+  </div>
+</div>
+
+<!-- Delete confirm -->
+<div class="overlay" id="overlay-delete">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">Remove schedule?</div>
+    <div class="sheet-sub" id="delete-sub"></div>
+    <button class="sheet-btn sheet-btn-danger" id="sheet-btn-confirm-delete">Yes, Delete</button>
+    <button class="sheet-btn sheet-btn-cancel" id="sheet-btn-delete-cancel">Cancel</button>
+  </div>
+</div>
+
+<!-- Turn Off All confirm -->
+<div class="overlay" id="overlay-all-off">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">Turn off all speakers?</div>
+    <div class="sheet-sub">This sends a power signal to every speaker that is currently active.</div>
+    <button class="sheet-btn sheet-btn-danger" id="sheet-btn-confirm-all-off">Turn Off All</button>
+    <button class="sheet-btn sheet-btn-cancel" id="sheet-btn-all-off-cancel">Cancel</button>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<script>
+/* ─── State ──────────────────────────────────────────────────────── */
+let discoveredSpeakers = [];   // [{name, ip}]
+let speakerStatuses    = {};   // {name: 'playing'|'standby'}
+let currentSpeaker     = null; // name string
+let currentSchedules   = [];   // array from config
+let moreTargetSchedule = null; // {name, paused}
+let fadeIn  = 5;               // minutes
+let fadeOut = 1;               // minutes
+let selectedPreset = 1;        // null or 1-6
+let nameAutoManaged = true;    // whether name tracks on-time
+let allSchedules    = {};      // {speakerName: [schedules]}
+
+/* ─── View router ────────────────────────────────────────────────── */
+const views = {
+  hub:     document.getElementById('view-hub'),
+  speaker: document.getElementById('view-speaker'),
+  form:    document.getElementById('view-form'),
+};
+
+function showView(name) {
+  Object.values(views).forEach(v => v.classList.remove('active'));
+  views[name].classList.add('active');
+}
+
+/* ─── Toast ──────────────────────────────────────────────────────── */
+let toastTimer;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
+}
+
+/* ─── Overlay helpers ────────────────────────────────────────────── */
+function showOverlay(id)  { document.getElementById(id).classList.add('show'); }
+function hideOverlay(id)  { document.getElementById(id).classList.remove('show'); }
+function closeAllOverlays() {
+  document.querySelectorAll('.overlay').forEach(o => o.classList.remove('show'));
+}
+
+/* ─── Auto-name from on-time ─────────────────────────────────────── */
+function nameFromTime(timeStr) {
+  if (!timeStr) return 'Morning Routine';
+  const [h] = timeStr.split(':').map(Number);
+  if (h >= 5  && h < 12) return 'Morning Routine';
+  if (h >= 12 && h < 17) return 'Afternoon Routine';
+  if (h >= 17 && h < 21) return 'Evening Routine';
+  return 'Night Routine';
+}
+
+/* ─── SCREEN 1: HUB ──────────────────────────────────────────────── */
+async function loadHub() {
+  showView('hub');
+  const list    = document.getElementById('speaker-list');
+  const spinner = document.getElementById('hub-spinner');
+  list.innerHTML = '';
+  spinner.style.display = 'block';
+
+  try {
+    const [discoveryRes, schedulesRes] = await Promise.all([
+      fetch('/api/discover'),
+      fetch('/api/schedules')
+    ]);
+    const discoveryData = await discoveryRes.json();
+    allSchedules = await schedulesRes.json();
+    discoveredSpeakers = Array.isArray(discoveryData) ? discoveryData : [];
+  } catch {
+    discoveredSpeakers = [];
+  }
+  spinner.style.display = 'none';
+
+  // Update greeting with count
+  const hours = new Date().getHours();
+  let greet = "Good evening";
+  if (hours >= 5 && hours < 12) greet = "Good morning";
+  else if (hours >= 12 && hours < 17) greet = "Good afternoon";
+  
+  const activeCount = Object.values(speakerStatuses).filter(s => s === 'playing').length;
+  document.getElementById('hub-greeting').textContent = `${greet}${activeCount > 0 ? ` · ${activeCount} active` : ''}`;
+  document.getElementById('hub-section-label').textContent = `Speakers${discoveredSpeakers.length > 0 ? ` · ${discoveredSpeakers.length} found` : ''}`;
+
+  if (!discoveredSpeakers.length) {
+    list.innerHTML = `<div class="empty-state">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+      <div>No speakers found.<br>Make sure they are on the same network.</div>
+    </div>`;
+    return;
+  }
+
+  // Render cards immediately (status loads lazily)
+  discoveredSpeakers.forEach(sp => {
+    const scheds = allSchedules[sp.name] || [];
+    const card = document.createElement('div');
+    card.className = 'speaker-card';
+    card.id = `card-${sp.name}`;
+    card.innerHTML = `
+      <div class="status-dot off" id="dot-${sp.name}"></div>
+      <div class="speaker-info">
+        <div class="speaker-name">${sp.name}</div>
+        <div class="speaker-status" id="status-${sp.name}">Checking…</div>
+        <div class="schedule-badge ${scheds.length ? '' : 'empty'}">${scheds.length} schedule${scheds.length === 1 ? '' : 's'}</div>
+      </div>
+      <span class="chevron"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>`;
+    card.addEventListener('click', () => openSpeaker(sp.name));
+    list.appendChild(card);
+    fetchSpeakerStatus(sp.name);
+  });
+}
+
+async function fetchSpeakerStatus(speakerName) {
+  try {
+    const res  = await fetch(`/api/${encodeURIComponent(speakerName)}/status`);
+    const data = await res.json();
+    const st   = (data.status || '').toUpperCase();
+    const playing = st !== 'STANDBY' && st !== '' && st !== 'ERROR';
+    speakerStatuses[speakerName] = playing ? 'playing' : 'standby';
+
+    const dot    = document.getElementById(`dot-${speakerName}`);
+    const label  = document.getElementById(`status-${speakerName}`);
+    const card   = document.getElementById(`card-${speakerName}`);
+    
+    if (dot)   { dot.className = `status-dot ${playing ? 'on' : 'off'}`; }
+    if (label) { label.textContent = playing ? `Playing · ${st}` : 'Standby'; }
+    if (card)  { card.classList.toggle('playing', playing); }
+    
+    // Update active count in header
+    const activeCount = Object.values(speakerStatuses).filter(s => s === 'playing').length;
+    const currentGreet = document.getElementById('hub-greeting').textContent.split(' · ')[0];
+    document.getElementById('hub-greeting').textContent = `${currentGreet}${activeCount > 0 ? ` · ${activeCount} active` : ''}`;
+  } catch {
+    speakerStatuses[speakerName] = 'standby';
+    const label = document.getElementById(`status-${speakerName}`);
+    if (label) label.textContent = 'Unavailable';
+  }
+}
+
+/* ─── SCREEN 2: SPEAKER DETAIL ───────────────────────────────────── */
+async function openSpeaker(name) {
+  currentSpeaker = name;
+  document.getElementById('detail-speaker-name').textContent = name;
+  document.getElementById('detail-speaker-status').textContent =
+    speakerStatuses[name] === 'playing' ? 'Playing' : 'Standby';
+  showView('speaker');
+  loadSchedules();
+}
+
+async function loadSchedules() {
+  const list = document.getElementById('schedule-list');
+  list.innerHTML = '<div class="spinner"></div>';
+  try {
+    const res  = await fetch('/api/schedules');
+    const data = await res.json();
+    currentSchedules = (data[currentSpeaker] || []);
+  } catch {
+    currentSchedules = [];
+  }
+  renderSchedules();
+}
+
+function renderSchedules() {
+  const list = document.getElementById('schedule-list');
+  list.innerHTML = '';
+
+  if (!currentSchedules.length) {
+    list.innerHTML = `<div class="empty-state" style="padding:30px 16px">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      <div>No schedules yet.<br>Tap Add Schedule to create one.</div>
+    </div>`;
+    return;
+  }
+
+  currentSchedules.forEach(s => {
+    const isPaused = !!s.paused;
+    const days = formatDays(s.days || []);
+    const vol  = s.volume != null ? `Vol ${s.volume}` : '';
+    const pre  = s.preset  != null ? `Preset ${s.preset}` : (s.source || '');
+    const meta = [days, `${s.on_time}–${s.off_time}`, vol, pre].filter(Boolean).join(' · ');
+
+    const card = document.createElement('div');
+    card.className = `schedule-card${isPaused ? ' paused' : ''}`;
+    card.innerHTML = `
+      <div class="schedule-card-body">
+        <div class="schedule-name">
+          ${s.name}
+          ${isPaused ? '<span class="paused-badge">Paused</span>' : ''}
+        </div>
+        <div class="schedule-meta">${meta}</div>
+      </div>
+      <div class="schedule-actions">
+        ${isPaused
+          ? `<button class="btn-resume" data-name="${s.name}">
+               <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+               Resume
+             </button>`
+          : `<button class="btn-pause" data-name="${s.name}">
+               <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+               Pause
+             </button>`}
+        <button class="btn-more" data-name="${s.name}" data-paused="${isPaused}">···</button>
+      </div>`;
+
+    if (isPaused) {
+      card.querySelector('.btn-resume').addEventListener('click', () => resumeSchedule(s.name));
+    } else {
+      card.querySelector('.btn-pause').addEventListener('click', () => pauseSchedule(s.name));
+    }
+    card.querySelector('.btn-more').addEventListener('click', () => openMoreSheet(s.name));
+
+    list.appendChild(card);
+  });
+}
+
+function formatDays(days) {
+  const all  = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
+  const wkd  = ['monday','tuesday','wednesday','thursday','friday'];
+  const wknd = ['saturday','sunday'];
+  const sorted = days.map(d => d.toLowerCase());
+  if (all.every(d => sorted.includes(d)))  return 'Every day';
+  if (wkd.every(d => sorted.includes(d)) && sorted.length === 5) return 'Weekdays';
+  if (wknd.every(d => sorted.includes(d)) && sorted.length === 2) return 'Weekends';
+  const abbr = {monday:'Mon',tuesday:'Tue',wednesday:'Wed',thursday:'Thu',friday:'Fri',saturday:'Sat',sunday:'Sun'};
+  return sorted.map(d => abbr[d] || d).join(', ');
+}
+
+async function pauseSchedule(name) {
+  try {
+    await fetch(`/api/${encodeURIComponent(currentSpeaker)}/schedules/${encodeURIComponent(name)}/pause`, {method:'PATCH'});
+    const s = currentSchedules.find(x => x.name === name);
+    if (s) s.paused = true;
+    renderSchedules();
+    toast('Schedule paused');
+  } catch { toast('Could not pause schedule'); }
+}
+
+async function resumeSchedule(name) {
+  try {
+    await fetch(`/api/${encodeURIComponent(currentSpeaker)}/schedules/${encodeURIComponent(name)}/resume`, {method:'PATCH'});
+    const s = currentSchedules.find(x => x.name === name);
+    if (s) s.paused = false;
+    renderSchedules();
+    toast('Schedule resumed');
+  } catch { toast('Could not resume schedule'); }
+}
+
+/* ─── More sheet ─────────────────────────────────────────────────── */
+function openMoreSheet(name) {
+  moreTargetSchedule = name;
+  document.getElementById('more-sheet-name').textContent = name;
+  showOverlay('overlay-more');
+}
+
+document.getElementById('sheet-btn-delete').addEventListener('click', () => {
+  hideOverlay('overlay-more');
+  document.getElementById('delete-sub').textContent = `"${moreTargetSchedule}" will be permanently removed.`;
+  showOverlay('overlay-delete');
+});
+document.getElementById('sheet-btn-more-cancel').addEventListener('click', () => hideOverlay('overlay-more'));
+
+document.getElementById('sheet-btn-confirm-delete').addEventListener('click', async () => {
+  hideOverlay('overlay-delete');
+  try {
+    await fetch(`/api/${encodeURIComponent(currentSpeaker)}/schedules/${encodeURIComponent(moreTargetSchedule)}`, {method:'DELETE'});
+    currentSchedules = currentSchedules.filter(s => s.name !== moreTargetSchedule);
+    renderSchedules();
+    toast('Schedule deleted');
+  } catch { toast('Could not delete schedule'); }
+});
+document.getElementById('sheet-btn-delete-cancel').addEventListener('click', () => hideOverlay('overlay-delete'));
+
+/* ─── Power (single) ─────────────────────────────────────────────── */
+document.getElementById('btn-power-speaker').addEventListener('click', async () => {
+  try {
+    await fetch(`/api/${encodeURIComponent(currentSpeaker)}/power`, {method:'POST'});
+    toast(`Power signal sent to ${currentSpeaker}`);
+    setTimeout(() => fetchSpeakerStatus(currentSpeaker), 2000);
+  } catch { toast('Could not reach speaker'); }
+});
+
+/* ─── Turn Off All ───────────────────────────────────────────────── */
+document.getElementById('btn-all-off').addEventListener('click', () => showOverlay('overlay-all-off'));
+document.getElementById('sheet-btn-all-off-cancel').addEventListener('click', () => hideOverlay('overlay-all-off'));
+document.getElementById('sheet-btn-confirm-all-off').addEventListener('click', async () => {
+  hideOverlay('overlay-all-off');
+  const active = discoveredSpeakers.filter(sp => speakerStatuses[sp.name] === 'playing');
+  if (!active.length) { toast('All speakers are already off'); return; }
+  await Promise.allSettled(
+    active.map(sp => fetch(`/api/${encodeURIComponent(sp.name)}/power`, {method:'POST'}))
+  );
+  active.forEach(sp => {
+    speakerStatuses[sp.name] = 'standby';
+    const dot   = document.getElementById(`dot-${sp.name}`);
+    const label = document.getElementById(`status-${sp.name}`);
+    if (dot)   dot.className = 'status-dot off';
+    if (label) label.textContent = 'Standby';
+  });
+  toast('All speakers turned off');
+});
+
+/* ─── SCREEN 3: ADD SCHEDULE ─────────────────────────────────────── */
+function openAddForm() {
+  nameAutoManaged = true;
+  fadeIn  = 5;
+  fadeOut = 1;
+  selectedPreset = 1;
+
+  // Reset fields
+  document.getElementById('f-on').value     = '06:15';
+  document.getElementById('f-off').value    = '07:30';
+  document.getElementById('f-volume').value = '10';
+  document.getElementById('vol-display').textContent = '10';
+  document.getElementById('f-name').value   = nameFromTime('06:15');
+  document.getElementById('fade-in-display').textContent  = '5 min';
+  document.getElementById('fade-out-display').textContent = '1 min';
+
+  // Weekdays default
+  document.querySelectorAll('.day-chip').forEach(c => {
+    const day = c.dataset.day;
+    const isWeekday = !['saturday','sunday'].includes(day);
+    c.classList.toggle('active', isWeekday);
+  });
+  document.querySelectorAll('.chip-quick').forEach(c => c.classList.remove('active'));
+  document.querySelector('[data-quick="weekdays"]').classList.add('active');
+
+  // Preset
+  document.querySelectorAll('.preset-pill').forEach(p => {
+    p.classList.toggle('active', p.dataset.preset === '1');
+  });
+
+  document.getElementById('form-back-label').textContent = currentSpeaker;
+  validateForm();
+  showView('form');
+}
+
+/* Day chips */
+document.querySelectorAll('.day-chip').forEach(chip => {
+  chip.addEventListener('click', () => {
+    chip.classList.toggle('active');
+    document.querySelectorAll('.chip-quick').forEach(c => c.classList.remove('active'));
+    validateForm();
+  });
+});
+
+/* Quick chips */
+document.querySelectorAll('.chip-quick').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const q = btn.dataset.quick;
+    document.querySelectorAll('.day-chip').forEach(c => {
+      const d = c.dataset.day;
+      const isWeekday = !['saturday','sunday'].includes(d);
+      if (q === 'all')      c.classList.add('active');
+      else if (q === 'weekdays')  c.classList.toggle('active', isWeekday);
+      else if (q === 'weekends')  c.classList.toggle('active', !isWeekday);
+    });
+    document.querySelectorAll('.chip-quick').forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    validateForm();
+  });
+});
+
+/* On-time auto-name */
+document.getElementById('f-on').addEventListener('change', e => {
+  if (nameAutoManaged) {
+    document.getElementById('f-name').value = nameFromTime(e.target.value);
+  }
+  validateForm();
+});
+document.getElementById('f-off').addEventListener('change', validateForm);
+document.getElementById('f-name').addEventListener('input', () => {
+  nameAutoManaged = false;
+  validateForm();
+});
+
+/* Volume slider */
+document.getElementById('f-volume').addEventListener('input', e => {
+  document.getElementById('vol-display').textContent = e.target.value;
+});
+
+/* Preset pills */
+document.querySelectorAll('.preset-pill').forEach(pill => {
+  pill.addEventListener('click', () => {
+    if (pill.classList.contains('active')) {
+      pill.classList.remove('active');
+      selectedPreset = null;
+    } else {
+      document.querySelectorAll('.preset-pill').forEach(p => p.classList.remove('active'));
+      pill.classList.add('active');
+      selectedPreset = parseInt(pill.dataset.preset);
+    }
+  });
+});
+
+/* Fade steppers */
+document.querySelectorAll('.stepper-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const type = btn.dataset.stepper;
+    const dir  = parseInt(btn.dataset.dir);
+    if (type === 'fade-in') {
+      fadeIn = Math.max(0, Math.min(60, fadeIn + dir));
+      document.getElementById('fade-in-display').textContent  = fadeIn === 0 ? 'Off' : `${fadeIn} min`;
+    } else {
+      fadeOut = Math.max(0, Math.min(30, fadeOut + dir));
+      document.getElementById('fade-out-display').textContent = fadeOut === 0 ? 'Off' : `${fadeOut} min`;
+    }
+  });
+});
+
+/* Validation */
+function validateForm() {
+  const name   = document.getElementById('f-name').value.trim();
+  const onTime  = document.getElementById('f-on').value;
+  const offTime = document.getElementById('f-off').value;
+  const days    = [...document.querySelectorAll('.day-chip.active')];
+  const ok = name.length > 0 && onTime && offTime && days.length > 0;
+  document.getElementById('btn-save').disabled = !ok;
+}
+
+/* Save */
+document.getElementById('btn-save').addEventListener('click', async () => {
+  const name    = document.getElementById('f-name').value.trim();
+  const onTime  = document.getElementById('f-on').value;
+  const offTime = document.getElementById('f-off').value;
+  const volume  = parseInt(document.getElementById('f-volume').value);
+  const days    = [...document.querySelectorAll('.day-chip.active')].map(c => c.dataset.day);
+
+  const payload = {
+    name,
+    days,
+    on_time:          onTime,
+    off_time:         offTime,
+    volume,
+    preset:           selectedPreset,
+    fade_in_duration:  fadeIn  * 60,
+    fade_out_duration: fadeOut * 60,
+    paused: false,
+  };
+
+  try {
+    const res = await fetch(`/api/${encodeURIComponent(currentSpeaker)}/schedules`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    if (res.ok || res.status === 202) {
+      toast('Schedule saved');
+      showView('speaker');
+      // Wait a beat for the queue to process, then reload
+      setTimeout(loadSchedules, 600);
+    } else {
+      toast('Could not save — check inputs');
+    }
+  } catch { toast('Network error'); }
+});
+
+/* ─── Navigation ─────────────────────────────────────────────────── */
+document.getElementById('btn-refresh').addEventListener('click', loadHub);
+document.getElementById('btn-back-hub').addEventListener('click', loadHub);
+document.getElementById('btn-back-speaker').addEventListener('click', () => {
+  showView('speaker');
+});
+document.getElementById('btn-add-schedule').addEventListener('click', openAddForm);
+
+/* Close overlays on backdrop click */
+document.querySelectorAll('.overlay').forEach(ov => {
+  ov.addEventListener('click', e => { if (e.target === ov) closeAllOverlays(); });
+});
+
+/* ─── Boot ───────────────────────────────────────────────────────── */
+window.addEventListener('load', () => {
+  const splash = document.getElementById('splash');
+  loadHub();
+  setTimeout(() => { splash.classList.add('hidden'); }, 800);
+  setTimeout(() => { splash.style.display = 'none'; },  1500);
+});
+</script>
+</body>
+</html>

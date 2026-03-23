@@ -1,0 +1,17 @@
+{
+  "name": "Your Speakers",
+  "short_name": "Speakers",
+  "description": "Manage your Bose SoundTouch speaker schedules",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#EEF2EE",
+  "theme_color": "#6A9E8F",
+  "icons": [
+    {
+      "src": "/app-static/icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

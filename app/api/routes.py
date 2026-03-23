@@ -1,13 +1,18 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, render_template
 from app.core import discovery, status, control
 from app.scheduler import jobs
 
 api_bp = Blueprint('api', __name__)
 
 @api_bp.route("/", methods=["GET"])
+def ui_root():
+    """Serve the Web UI single-page application."""
+    return render_template("index.html")
+
+@api_bp.route("/api/info", methods=["GET"])
 def api_root():
     """
-    Service Root Endpoint
+    Service Info Endpoint
     Returns general metadata about the service.
     ---
     responses:

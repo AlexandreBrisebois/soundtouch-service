@@ -5,7 +5,12 @@ from app.api.routes import api_bp
 from app.scheduler import jobs
 
 def create_app():
-    app_instance = Flask(__name__)
+    app_instance = Flask(
+        __name__,
+        template_folder=os.path.join(os.path.dirname(__file__), "templates"),
+        static_folder=os.path.join(os.path.dirname(__file__), "static"),
+        static_url_path="/app-static"
+    )
     
     # Initialize OpenAPI specification and Swagger UI on /apidocs/
     Swagger(app_instance, template={
@@ -25,5 +30,5 @@ def create_app():
 
 if __name__ == "__main__":
     app_server = create_app()
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT", 9001))
     app_server.run(host="0.0.0.0", port=port, debug=False)

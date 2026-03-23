@@ -4,13 +4,20 @@ Automate your Bose SoundTouch speakers. This app finds your speakers on the loca
 
 ## Features
 
-* **Fast Setup:** Finds speakers on your network fast.
-* **Smart Time:** Plays music in the morning and stops it at night.
-* **Weekends:** Make one routine for weekdays and one for weekends.
-* **Polite System:** It checks if music is already playing. It will never interrupt your songs.
+* **Phone-Friendly UI:** Manage your speakers from any phone or tablet in the house. No app to install, just a fast PWA.
 * **Pause / Resume:** Temporarily pause any schedule (sick day, ped day, vacation) without losing it. Resume when ready.
-* **Live API:** Add schedules from your browser using the built-in REST API.
-* **NAS Ready:** Runs great as a simple Docker image using Host networking.
+* **Smart Time:** Plays music in the morning and stops it at night automatically.
+* **Polite System:** It checks if music is already playing first. It will never interrupt your own songs.
+* **NAS Ready:** Runs perfectly in a Docker container on port **9001**.
+* **Zero Config Discovery:** Automatically finds SoundTouch speakers on your local network.
+
+## The Web UI
+
+Access the manager at `http://<your-ip>:9001` from your browser. 
+
+* **Hub:** See all speakers at a glance with live status indicators.
+* **Detail:** Manage schedules, toggle power, and view active routines.
+* **PWA:** Select "Add to Home Screen" on iOS or Android to use it like a native app. The icon and theme color are already configured.
 
 ## The Schedule
 
@@ -46,7 +53,7 @@ To ensure a gentle experience, the app supports volume fading:
 
 You do not have to edit the file by hand. The app provides a fast REST API. You can add, update, and delete schedules over your network. Data saves safely through a background queue. Your files will not corrupt.
 
-Open your browser to `http://<your-ip>:5000/apidocs` to see the live API manual. You can test commands directly from this page.
+Open your browser to `http://<your-ip>:9001/apidocs` to see the live API manual. You can test commands directly from this page.
 
 ### Pause & Resume
 
@@ -61,10 +68,11 @@ Both return `202 Accepted`. The `paused` flag is saved to disk. The schedule rem
 
 ## Deployment
 
-The app runs perfectly in a Synology NAS Docker environment. GitHub Actions automatically builds and publishes the newest container image to Docker Hub whenever a release tag is pushed. You do not need to build it yourself!
+The app runs perfectly in a Synology NAS Docker environment. 
 
-1. **Host Network:** Run the Docker container in "Host" network mode. This is required to find speakers.
-2. **Mount Config:** Map `deployment/config.json` to `/workspace/config.json`. The app writes schedule changes here. It will not break your file link.
+1. **Host Network:** Run the Docker container in "Host" network mode. This is required for mDNS discovery.
+2. **Mount Config:** Map `deployment/config.json` to `/workspace/config.json`. The app writes schedule changes here.
+3. **Port:** The manager serves the Web UI and API on port **9001** by default.
 
 ## Documentation
 

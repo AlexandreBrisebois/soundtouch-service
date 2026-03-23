@@ -95,3 +95,23 @@ This is an independent, component-based breakdown of the steps required to build
   - [x] Update `config.json` and `deployment/config.json` templates with the new `"paused"` field.
   - [x] Update `tests/test_api.py` with pause → verify → resume → verify integration test calls.
   - [x] Update `README.md` with Pause / Resume feature bullet, updated JSON example, and new API subsection.
+
+- [x] **Phase 17: Phone-Friendly Web UI** *(branch: `feature/web-ui`)*
+  - [x] Create feature branch `feature/web-ui` from `main`.
+  - [x] Add `GET /` route in Flask serving the single-page HTML app from `app/templates/index.html`.
+  - [x] Update `app/main.py` to set `template_folder` and `static_folder`.
+  - [x] Update `Dockerfile` to `COPY app/templates/ ./app/templates/` and `COPY app/static/ ./app/static/`.
+  - [x] **App icon** — copy generated icon to `app/static/icon.png`, served at `/static/icon.png`.
+  - [x] **PWA manifest** — create `app/static/manifest.json` for Android "Add to Home Screen" support.
+  - [x] **Cross-platform `<head>` tags** — `apple-touch-icon` (iOS), `manifest` (Android), `theme-color`, `viewport-fit=cover`.
+  - [x] **Responsive layout** — max-width 540 px (tablet), 640 px (iPad landscape); single column on phones.
+  - [x] **Hub screen** — discover speakers, show live status dots, one-tap to detail, "Turn Off All" in thumb zone.
+  - [x] **Speaker Detail screen** — schedule list with pause (primary) / delete (secondary via `···`), power toggle, Add Schedule button.
+  - [x] **Add/Edit Schedule form** — smart defaults, auto-name from on-time, day chips, volume slider, preset pills, ± fade stepper.
+  - [x] **Pause/Resume flow** — toggle on card calls `PATCH /api/<speaker>/schedules/<name>/pause|resume`.
+  - [x] **Delete flow** — `···` menu → confirmation sheet → `DELETE /api/<speaker>/schedules/<name>`.
+  - [x] **Turn Off All flow** — confirmation sheet → power toggle all active speakers.
+  - [x] Verify all flows on phone (375 px) and tablet (768 px) viewports.
+  - [x] Run `pytest tests/test_api.py -v` to confirm no regressions.
+
+
