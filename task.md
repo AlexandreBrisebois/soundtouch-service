@@ -113,5 +113,8 @@ This is an independent, component-based breakdown of the steps required to build
   - [x] **Turn Off All flow** — confirmation sheet → power toggle all active speakers.
   - [x] Verify all flows on phone (375 px) and tablet (768 px) viewports.
   - [x] Run `pytest tests/test_api.py -v` to confirm no regressions.
+  - [x] **AUX Support** — Add AUX pill to the schedule form and update payload logic.
+  - [x] **Rich Status Info** — Show source (Spotify, AUX, etc.) and track metadata in the UI.
+  - [x] **PWA Installability** — Added Service Worker (`sw.js`) to enable standalone mode on Android/Edge.
 
 

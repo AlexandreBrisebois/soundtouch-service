@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, request, render_template
+from flask import Blueprint, jsonify, request, render_template, current_app
 from app.core import discovery, status, control
 from app.scheduler import jobs
 
@@ -8,6 +8,10 @@ api_bp = Blueprint('api', __name__)
 def ui_root():
     """Serve the Web UI single-page application."""
     return render_template("index.html")
+
+@api_bp.route("/sw.js")
+def serve_sw():
+    return current_app.send_static_file('sw.js')
 
 @api_bp.route("/api/info", methods=["GET"])
 def api_root():
@@ -235,8 +239,8 @@ def api_status(speaker_name):
     devices = discovery.discover_systems(timeout=3)
     for d in devices:
         if d['name'] == speaker_name:
-            curr_status = status.get_now_playing(d['ip'])
-            return jsonify({"speaker": speaker_name, "status": curr_status, "ip": d['ip']})
+            status_data = status.get_now_playing(d['ip'])
+            return jsonify({"speaker": speaker_name, "ip": d['ip'], **status_data})
     return jsonify({"error": "Speaker not found"}), 404
 
 @api_bp.route("/api/<speaker_name>/power", methods=["POST"])
