@@ -21,6 +21,6 @@ services:
     volumes:
       # Maps the configuration file into the container. 
       # You can edit this file in Synology File Station and the schedule will update instantly.
-      - ./config.json:/app/config.json
+      - ./config.json:/workspace/config.json
 
     restart: unless-stopped

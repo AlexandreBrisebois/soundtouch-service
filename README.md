@@ -49,7 +49,7 @@ Open your browser to `http://<your-ip>:5000/apidocs` to see the live API manual.
 The app runs perfectly in a Synology NAS Docker environment. GitHub Actions automatically builds and publishes the newest container image to Docker Hub whenever a release tag is pushed. You do not need to build it yourself!
 
 1. **Host Network:** Run the Docker container in "Host" network mode. This is required to find speakers.
-2. **Mount Config:** Map `deployment/config.json` to `/app/config.json`. The app writes schedule changes here. It will not break your file link.
+2. **Mount Config:** Map `deployment/config.json` to `/workspace/config.json`. The app writes schedule changes here. It will not break your file link.
 
 ## Documentation
 

@@ -81,7 +81,7 @@ def config_io_worker():
             # -----------------------------------------------------------------
             # IMPORTANT DOCKER CAVEAT:
             # We must NOT use `os.replace` if config.json is bind-mounted 
-            # natively as a single file (e.g. `- ./config.json:/app/config.json`).
+            # natively as a single file (e.g. `- ./config.json:/workspace/config.json`).
             # `os.replace` changes the inode, which breaks the Docker volume 
             # link to the host system.
             # 
