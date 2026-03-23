@@ -8,7 +8,8 @@
       "preset": 1,
       "volume": 10,
       "fade_in_duration": 300,
-      "fade_out_duration": 60
+      "fade_out_duration": 60,
+      "paused": false
     },
     {
       "name": "Weekend Sleep In",
@@ -18,7 +19,8 @@
       "source": "AUX",
       "volume": 20,
       "fade_in_duration": 300,
-      "fade_out_duration": 60
+      "fade_out_duration": 60,
+      "paused": false
     }
   ]
 }

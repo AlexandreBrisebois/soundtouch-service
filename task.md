@@ -86,3 +86,12 @@ This is an independent, component-based breakdown of the steps required to build
   - [x] Implement looping logic with `time.sleep` in `auto_on_job` (starting from 0).
   - [x] Implement looping logic with `time.sleep` in `auto_off_job` (stepping down to 0).
   - [x] Ensure manual interventions smoothly abort background fade threads.
+
+- [x] **Phase 16: Schedule Pause / Resume**
+  - [x] Add `"paused": false` field to the default config in `app/scheduler/jobs.py` (`get_default_config()`).
+  - [x] Add a skip guard in `run_scheduler_loop()` to silently skip any schedule where `"paused": true`.
+  - [x] Add `PATCH /api/<speaker_name>/schedules/<schedule_name>/pause` endpoint to `app/api/routes.py`.
+  - [x] Add `PATCH /api/<speaker_name>/schedules/<schedule_name>/resume` endpoint to `app/api/routes.py`.
+  - [x] Update `config.json` and `deployment/config.json` templates with the new `"paused"` field.
+  - [x] Update `tests/test_api.py` with pause → verify → resume → verify integration test calls.
+  - [x] Update `README.md` with Pause / Resume feature bullet, updated JSON example, and new API subsection.

@@ -102,9 +102,31 @@ if __name__ == "__main__":
             "fade_out_duration": 30
         }, timeout=2)
         print(res.json())
-        
+
         time.sleep(1) # wait for IO thread
-        
+
+        print(f"\nPATCH {base_url}/api/{target}/schedules/Test Routine/pause - Pausing 'Test Routine'...")
+        res = requests.patch(f"{base_url}/api/{target}/schedules/Test Routine/pause", timeout=2)
+        print(res.json())
+
+        time.sleep(1) # wait for IO thread
+
+        print(f"\nGET {base_url}/api/schedules - Verifying 'Test Routine' is paused...")
+        req = requests.get(f"{base_url}/api/schedules", timeout=2)
+        print(req.json())
+
+        print(f"\nPATCH {base_url}/api/{target}/schedules/Test Routine/resume - Resuming 'Test Routine'...")
+        res = requests.patch(f"{base_url}/api/{target}/schedules/Test Routine/resume", timeout=2)
+        print(res.json())
+
+        time.sleep(1) # wait for IO thread
+
+        print(f"\nGET {base_url}/api/schedules - Verifying 'Test Routine' is resumed...")
+        req = requests.get(f"{base_url}/api/schedules", timeout=2)
+        print(req.json())
+
+        time.sleep(1) # wait for IO thread
+
         print(f"\nDELETE {base_url}/api/{target}/schedules - Removing 'Test Routine'...")
         res = requests.delete(f"{base_url}/api/{target}/schedules/Test Routine", timeout=2)
         print(res.json())

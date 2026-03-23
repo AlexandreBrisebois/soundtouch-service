@@ -8,6 +8,7 @@ Automate your Bose SoundTouch speakers. This app finds your speakers on the loca
 * **Smart Time:** Plays music in the morning and stops it at night.
 * **Weekends:** Make one routine for weekdays and one for weekends.
 * **Polite System:** It checks if music is already playing. It will never interrupt your songs.
+* **Pause / Resume:** Temporarily pause any schedule (sick day, ped day, vacation) without losing it. Resume when ready.
 * **Live API:** Add schedules from your browser using the built-in REST API.
 * **NAS Ready:** Runs great as a simple Docker image using Host networking.
 
@@ -34,7 +35,8 @@ To ensure a gentle experience, the app supports volume fading:
       "preset": 1,
       "volume": 10,
       "fade_in_duration": 300,
-      "fade_out_duration": 60
+      "fade_out_duration": 60,
+      "paused": false
     }
   ]
 }
@@ -45,6 +47,17 @@ To ensure a gentle experience, the app supports volume fading:
 You do not have to edit the file by hand. The app provides a fast REST API. You can add, update, and delete schedules over your network. Data saves safely through a background queue. Your files will not corrupt.
 
 Open your browser to `http://<your-ip>:5000/apidocs` to see the live API manual. You can test commands directly from this page.
+
+### Pause & Resume
+
+Pause a schedule for a sick day, ped day, or vacation without losing the routine:
+
+```
+PATCH /api/<speaker_name>/schedules/<schedule_name>/pause
+PATCH /api/<speaker_name>/schedules/<schedule_name>/resume
+```
+
+Both return `202 Accepted`. The `paused` flag is saved to disk. The schedule remains in the config and resumes on the next matching day once you resume it.
 
 ## Deployment
 

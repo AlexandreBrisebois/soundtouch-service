@@ -116,6 +116,86 @@ def api_delete_schedule(speaker_name, schedule_name):
     return jsonify({"message": f"Delete request for schedule '{schedule_name}' queued for processing on '{speaker_name}'"}), 202
 
 
+@api_bp.route("/api/<speaker_name>/schedules/<schedule_name>/pause", methods=["PATCH"])
+def api_pause_schedule(speaker_name, schedule_name):
+    """
+    Pause a Schedule
+    Temporarily pause a schedule by name. The schedule is kept but skipped by the scheduler until resumed.
+    ---
+    parameters:
+      - in: path
+        name: speaker_name
+        type: string
+        required: true
+        description: The precise broadcast name of the SoundTouch speaker
+      - in: path
+        name: schedule_name
+        type: string
+        required: true
+        description: The name of the routine to pause
+    responses:
+      202:
+        description: Pause request is accepted and queued for IO processing.
+      404:
+        description: Schedule not found for the given speaker.
+    """
+    config = jobs.get_current_config()
+    schedules = config.get(speaker_name, [])
+    target = next((s for s in schedules if s.get("name") == schedule_name), None)
+    if target is None:
+        return jsonify({"error": f"Schedule '{schedule_name}' not found for speaker '{speaker_name}'"}), 404
+
+    updated = dict(target)
+    updated["paused"] = True
+    jobs.config_queue.put({
+        "action": "add_update",
+        "speaker": speaker_name,
+        "schedule_name": schedule_name,
+        "data": updated
+    })
+    return jsonify({"message": f"Schedule '{schedule_name}' on '{speaker_name}' is now paused."}), 202
+
+
+@api_bp.route("/api/<speaker_name>/schedules/<schedule_name>/resume", methods=["PATCH"])
+def api_resume_schedule(speaker_name, schedule_name):
+    """
+    Resume a Schedule
+    Resume a previously paused schedule so the scheduler will execute it again.
+    ---
+    parameters:
+      - in: path
+        name: speaker_name
+        type: string
+        required: true
+        description: The precise broadcast name of the SoundTouch speaker
+      - in: path
+        name: schedule_name
+        type: string
+        required: true
+        description: The name of the routine to resume
+    responses:
+      202:
+        description: Resume request is accepted and queued for IO processing.
+      404:
+        description: Schedule not found for the given speaker.
+    """
+    config = jobs.get_current_config()
+    schedules = config.get(speaker_name, [])
+    target = next((s for s in schedules if s.get("name") == schedule_name), None)
+    if target is None:
+        return jsonify({"error": f"Schedule '{schedule_name}' not found for speaker '{speaker_name}'"}), 404
+
+    updated = dict(target)
+    updated["paused"] = False
+    jobs.config_queue.put({
+        "action": "add_update",
+        "speaker": speaker_name,
+        "schedule_name": schedule_name,
+        "data": updated
+    })
+    return jsonify({"message": f"Schedule '{schedule_name}' on '{speaker_name}' has been resumed."}), 202
+
+
 @api_bp.route("/api/discover", methods=["GET"])
 def api_discover():
     """

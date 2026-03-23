@@ -22,7 +22,8 @@ def get_default_config():
                 "preset": 1,
                 "volume": 10,
                 "fade_in_duration": 300,
-                "fade_out_duration": 60
+                "fade_out_duration": 60,
+                "paused": False
             }
         ]
     }
@@ -225,6 +226,9 @@ def run_scheduler_loop():
                     continue
                     
                 for schedule in schedules:
+                    if schedule.get("paused", False):
+                        continue
+
                     days = schedule.get("days")
                     if days and current_day not in [d.lower() for d in days]:
                         continue
