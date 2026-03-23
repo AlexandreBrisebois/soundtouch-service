@@ -6,7 +6,9 @@
       "on_time": "06:15",
       "off_time": "07:30",
       "preset": 1,
-      "volume": 10
+      "volume": 10,
+      "fade_in_duration": 300,
+      "fade_out_duration": 60
     },
     {
       "name": "Weekend Sleep In",
@@ -14,7 +16,9 @@
       "on_time": "09:00",
       "off_time": "10:30",
       "source": "AUX",
-      "volume": 20
+      "volume": 20,
+      "fade_in_duration": 300,
+      "fade_out_duration": 60
     }
   ]
 }

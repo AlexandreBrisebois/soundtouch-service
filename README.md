@@ -13,7 +13,15 @@ Automate your Bose SoundTouch speakers. This app finds your speakers on the loca
 
 ## The Schedule
 
-You provide a simple JSON schedule. The app reads it and does the work. You can select which days a routine should run. You can also add `"source": "AUX"` to play from the AUX cable instead of a preset station.
+The app reads it and does the work. You can select which days a routine should run. 
+
+### Fade Transitions
+To ensure a gentle experience, the app supports volume fading:
+* **Fade-In (Wake Up):** Gradually steps up volume from 0 to your target. Default is **300 seconds** (5 minutes).
+* **Fade-Out (Sleep):** Gradually steps down volume to 0 before power off. Default is **60 seconds** (1 minute).
+
+> [!IMPORTANT]
+> All duration values (e.g., `fade_in_duration`) must be specified in **seconds**, not minutes.
 
 ```json
 {
@@ -24,15 +32,9 @@ You provide a simple JSON schedule. The app reads it and does the work. You can 
       "on_time": "06:15",
       "off_time": "07:30",
       "preset": 1,
-      "volume": 10
-    },
-    {
-      "name": "Weekend Sleep In",
-      "days": ["saturday", "sunday"],
-      "on_time": "09:00",
-      "off_time": "10:30",
-      "source": "AUX",
-      "volume": 20
+      "volume": 10,
+      "fade_in_duration": 300,
+      "fade_out_duration": 60
     }
   ]
 }

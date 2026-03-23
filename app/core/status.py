@@ -30,6 +30,26 @@ def get_now_playing(ip):
         print(f"Error querying {ip}: {e}")
         return None
 
+def get_volume(ip):
+    """
+    Fetches the current volume level of a speaker.
+    Returns the integer volume level (0-100), or None if unreachable.
+    """
+    url = f"http://{ip}:8090/volume"
+    try:
+        response = requests.get(url, timeout=5)
+        response.raise_for_status()
+        root = ET.fromstring(response.text)
+        
+        actual_volume_elem = root.find('actualvolume')
+        if actual_volume_elem is not None:
+            return int(actual_volume_elem.text)
+            
+        return None
+    except Exception as e:
+        print(f"Error getting volume from {ip}: {e}")
+        return None
+
 if __name__ == "__main__":
     # A quick standalone test usage:
     # print(get_now_playing("192.168.1.199"))

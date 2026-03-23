@@ -20,7 +20,9 @@ def get_default_config():
                 "on_time": "06:15",
                 "off_time": "07:30",
                 "preset": 1,
-                "volume": 10
+                "volume": 10,
+                "fade_in_duration": 300,
+                "fade_out_duration": 60
             }
         ]
     }
@@ -103,7 +105,7 @@ def config_io_worker():
         except Exception as e:
             print(f"[IO Manager] Error processing mutation: {e}")
 
-def auto_on_job(speaker_name, preset, volume, source=None):
+def auto_on_job(speaker_name, preset, volume, source=None, fade_in_duration=300):
     print(f"[Scheduler] Auto-ON triggered for '{speaker_name}'...")
     devices = discovery.discover_systems(timeout=5)
     
@@ -128,17 +130,39 @@ def auto_on_job(speaker_name, preset, volume, source=None):
     if control.power_action(target_ip):
         # Wait a moment for speaker to boot and accept additional commands
         time.sleep(3)
-        print(f"[Scheduler] '{speaker_name}' setting volume to {volume}...")
-        control.set_volume(target_ip, volume)
-        time.sleep(1)
+        
         if source == "AUX":
             print(f"[Scheduler] '{speaker_name}' switching to AUX input...")
             control.send_key(target_ip, "AUX_INPUT")
         else:
             print(f"[Scheduler] '{speaker_name}' playing preset {preset}...")
             control.play_preset(target_ip, preset)
+            
+        time.sleep(1)
+        
+        print(f"[Scheduler] '{speaker_name}' starting volume fade-in to {volume} over {fade_in_duration}s...")
+        control.set_volume(target_ip, 0)
+        
+        if fade_in_duration <= 0 or volume <= 0:
+            control.set_volume(target_ip, volume)
+            return
 
-def auto_off_job(speaker_name):
+        sleep_interval = float(fade_in_duration) / volume
+        
+        for v in range(1, volume + 1):
+            time.sleep(sleep_interval)
+            
+            if v % 5 == 0 or sleep_interval > 5:
+                current_state = status.get_now_playing(target_ip)
+                if current_state == "STANDBY":
+                    print(f"[Scheduler] Fade-in aborted: '{speaker_name}' was manually turned off mid-fade.")
+                    return
+                    
+            control.set_volume(target_ip, v)
+        
+        print(f"[Scheduler] '{speaker_name}' achieved target volume {volume}.")
+
+def auto_off_job(speaker_name, fade_out_duration=60):
     print(f"[Scheduler] Auto-OFF triggered for '{speaker_name}'...")
     devices = discovery.discover_systems(timeout=5)
     
@@ -156,7 +180,22 @@ def auto_off_job(speaker_name):
     print(f"[Scheduler] '{speaker_name}' current status is '{speaker_status}'")
     
     if speaker_status != "STANDBY":
-        print(f"[Scheduler] Speaker is active. Sending power off signal.")
+        print(f"[Scheduler] Speaker is active. Starting volume fade-out over {fade_out_duration}s.")
+        
+        current_volume = status.get_volume(target_ip)
+        if current_volume is not None and current_volume > 0 and fade_out_duration > 0:
+            sleep_interval = float(fade_out_duration) / current_volume
+            for v in range(current_volume - 1, -1, -1):
+                time.sleep(sleep_interval)
+                
+                if v % 5 == 0 or sleep_interval > 5:
+                    if status.get_now_playing(target_ip) == "STANDBY":
+                        print(f"[Scheduler] Fade-out aborted: '{speaker_name}' was already turned off.")
+                        return
+                        
+                control.set_volume(target_ip, v)
+                
+        print(f"[Scheduler] Sending power off signal to '{speaker_name}'.")
         control.power_action(target_ip)
     else:
         print(f"[Scheduler] Speaker is already in STANDBY mode. No action needed.")
@@ -197,19 +236,21 @@ def run_scheduler_loop():
                         preset = schedule.get("preset", 1)
                         volume = schedule.get("volume", 20)
                         source = schedule.get("source")
+                        fade_in_duration = schedule.get("fade_in_duration", 300)
                         source_log = f"Source: {source}" if source else f"Preset: {preset}"
-                        print(f"[Scheduler] [{current_time_str}] '{schedule.get('name')}' for '{speaker_name}' ON event triggered! ({source_log}, Volume: {volume})")
+                        print(f"[Scheduler] [{current_time_str}] '{schedule.get('name')}' for '{speaker_name}' ON event triggered! ({source_log}, t-Vol: {volume}, fade: {fade_in_duration}s)")
                         threading.Thread(
                             target=auto_on_job, 
-                            args=(speaker_name, preset, volume, source), 
+                            args=(speaker_name, preset, volume, source, fade_in_duration), 
                             daemon=True
                         ).start()
                         
                     if current_time_str == off_time:
-                        print(f"[Scheduler] [{current_time_str}] '{schedule.get('name')}' for '{speaker_name}' OFF event triggered!")
+                        fade_out_duration = schedule.get("fade_out_duration", 60)
+                        print(f"[Scheduler] [{current_time_str}] '{schedule.get('name')}' for '{speaker_name}' OFF event triggered! (fade: {fade_out_duration}s)")
                         threading.Thread(
                             target=auto_off_job, 
-                            args=(speaker_name,), 
+                            args=(speaker_name, fade_out_duration), 
                             daemon=True
                         ).start()
                     

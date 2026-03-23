@@ -78,3 +78,11 @@ This is an independent, component-based breakdown of the steps required to build
   - [X] Implement robust `source` parsing in `app/scheduler/jobs.py` during `run_scheduler_loop()`.
   - [X] Update `app/core/control.py` to support `AUX_INPUT` action.
   - [X] Update `README.md` to explain the new property.
+
+- [x] **Phase 15: Fade-In and Fade-Out Support**
+  - [x] Investigate feasibility of fading volume for Bose SoundTouch speakers and threading behavior.
+  - [x] Implement `get_volume` in `app/core/status.py`.
+  - [x] Update `app/scheduler/jobs.py` configuration schema (`fade_in_duration`, `fade_out_duration`).
+  - [x] Implement looping logic with `time.sleep` in `auto_on_job` (starting from 0).
+  - [x] Implement looping logic with `time.sleep` in `auto_off_job` (stepping down to 0).
+  - [x] Ensure manual interventions smoothly abort background fade threads.
