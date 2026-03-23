@@ -16,6 +16,7 @@ def get_default_config():
         "Target Speaker 1": [
             {
                 "name": "Morning Routine",
+                "days": ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"],
                 "on_time": "06:15",
                 "off_time": "07:30",
                 "preset": 1,
@@ -166,6 +167,7 @@ def run_scheduler_loop():
     while True:
         now = time.localtime()
         current_time_str = time.strftime("%H:%M", now)
+        current_day = time.strftime("%A", now).lower()
         
         if current_time_str != last_processed_minute:
             last_processed_minute = current_time_str
@@ -177,6 +179,10 @@ def run_scheduler_loop():
                     continue
                     
                 for schedule in schedules:
+                    days = schedule.get("days")
+                    if days and current_day not in [d.lower() for d in days]:
+                        continue
+                        
                     on_time = schedule.get("on_time")
                     off_time = schedule.get("off_time")
                     

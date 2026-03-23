@@ -77,6 +77,7 @@ if __name__ == "__main__":
         print("\nPOST /api/schedules - Adding 'Test Routine'...")
         res = requests.post(f"http://localhost:5000/api/{target}/schedules", json={
             "name": "Test Routine",
+            "days": ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"],
             "on_time": "12:00",
             "off_time": "13:00",
             "preset": 1,

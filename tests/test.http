@@ -25,6 +25,13 @@ Content-Type: application/json
 
 {
     "name": "Test Routine",
+    "days": [
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday"
+    ],
     "on_time": "08:00",
     "off_time": "09:00",
     "preset": 3,

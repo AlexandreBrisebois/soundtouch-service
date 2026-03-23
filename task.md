@@ -60,3 +60,9 @@ This is an independent, component-based breakdown of the steps required to build
   - [X] Configure action securely mapping Docker Hub credentials (`DOCKER_USERNAME`, `DOCKER_PASSWORD`) using GitHub Secrets.
   - [X] Configure trigger natively for Semantic Versioning tags (e.g. `v1.0.0`).
   - [X] Extract Git tag dynamically and apply it as the Docker image tag (and `latest`) during the push phase.
+
+- [X] **Phase 12: Weekend Scheduling**
+  - [X] Update `config.json` default properties to include `"days"` with default `"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"`.
+  - [X] Implement robust day-of-week parsing in `app/scheduler/jobs.py` during `run_scheduler_loop()`.
+  - [X] Update Swagger UI definitions in `app/api/routes.py` to allow the new `"days"` query parameter as an explicit string array.
+  - [X] Update Automated tests (`tests/test_api.py`) where applicable to ensure we don't regress.

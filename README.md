@@ -8,17 +8,26 @@ This service finds Bose speakers on your local network. It turns them on when yo
 If a speaker is already playing music during a scheduled start time, the service will not interrupt it.
 
 ## The Schedule
-You provide a simple JSON schedule. The app reads it and does the work.
+You provide a simple JSON schedule. The app reads it and does the work. You can optionally specify which days a routine should run (if omitted, it runs every day).
 
 ```json
 {
   "Living Room": [
     {
       "name": "Morning Routine",
+      "days": ["monday", "tuesday", "wednesday", "thursday", "friday"],
       "on_time": "06:15",
       "off_time": "07:30",
       "preset": 1,
       "volume": 10
+    },
+    {
+      "name": "Weekend Sleep In",
+      "days": ["saturday", "sunday"],
+      "on_time": "09:00",
+      "off_time": "10:30",
+      "preset": 2,
+      "volume": 20
     }
   ]
 }

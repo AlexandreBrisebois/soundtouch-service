@@ -49,6 +49,11 @@ def api_add_schedule(speaker_name):
             name:
               type: string
               example: "Morning Routine"
+            days:
+              type: array
+              items:
+                type: string
+              example: ["monday", "tuesday", "wednesday", "thursday", "friday"]
             on_time:
               type: string
               example: "06:15"
