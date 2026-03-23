@@ -166,6 +166,9 @@ def run_scheduler_loop():
     global current_config
     current_config = load_config()
     print(f"[Scheduler] Initialized. Dynamic configuration loaded from '{CONFIG_FILE}'.")
+    for speaker, schedules in current_config.items():
+        if isinstance(schedules, list):
+            print(f"[Scheduler] Loaded {len(schedules)} schedule(s) for '{speaker}': {[s.get('name') for s in schedules]}")
     last_processed_minute = None
     
     while True:
@@ -191,13 +194,19 @@ def run_scheduler_loop():
                     off_time = schedule.get("off_time")
                     
                     if current_time_str == on_time:
+                        preset = schedule.get("preset", 1)
+                        volume = schedule.get("volume", 20)
+                        source = schedule.get("source")
+                        source_log = f"Source: {source}" if source else f"Preset: {preset}"
+                        print(f"[Scheduler] [{current_time_str}] '{schedule.get('name')}' for '{speaker_name}' ON event triggered! ({source_log}, Volume: {volume})")
                         threading.Thread(
                             target=auto_on_job, 
-                            args=(speaker_name, schedule.get("preset", 1), schedule.get("volume", 20), schedule.get("source")), 
+                            args=(speaker_name, preset, volume, source), 
                             daemon=True
                         ).start()
                         
                     if current_time_str == off_time:
+                        print(f"[Scheduler] [{current_time_str}] '{schedule.get('name')}' for '{speaker_name}' OFF event triggered!")
                         threading.Thread(
                             target=auto_off_job, 
                             args=(speaker_name,), 
