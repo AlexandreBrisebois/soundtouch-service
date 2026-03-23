@@ -3,24 +3,24 @@ version: '3.8'
 services:
   soundtouch-service:
     # Pull the image directly from your public/private Docker Hub registry
-    image: your_dockerhub_username/soundtouch-service:latest
+    image: brisebois/soundtouch-service:latest
     container_name: soundtouch-service
-    
+
     # "host" networking is STRICTLY REQUIRED for mDNS discovery (zeroconf/Bonjour)
     # The container will not find any SoundTouch speakers on a bridge network.
     network_mode: "host"
-    
+
     environment:
       # API Port configuration
       - PORT=5000
-      
+
       # VERY IMPORTANT: Set your exact time zone so the Python scheduler 
       # triggers your config.json "HH:MM" at the correct local time instead of UTC.
       - TZ=America/New_York
-      
+
     volumes:
       # Maps the configuration file into the container. 
       # You can edit this file in Synology File Station and the schedule will update instantly.
       - ./config.json:/app/config.json
-      
+
     restart: unless-stopped
