@@ -60,6 +60,9 @@ def api_add_schedule(speaker_name):
             off_time:
               type: string
               example: "07:30"
+            source:
+              type: string
+              example: "AUX"
             preset:
               type: integer
               example: 1

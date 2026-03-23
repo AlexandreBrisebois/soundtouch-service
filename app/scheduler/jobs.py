@@ -103,7 +103,7 @@ def config_io_worker():
         except Exception as e:
             print(f"[IO Manager] Error processing mutation: {e}")
 
-def auto_on_job(speaker_name, preset, volume):
+def auto_on_job(speaker_name, preset, volume, source=None):
     print(f"[Scheduler] Auto-ON triggered for '{speaker_name}'...")
     devices = discovery.discover_systems(timeout=5)
     
@@ -131,8 +131,12 @@ def auto_on_job(speaker_name, preset, volume):
         print(f"[Scheduler] '{speaker_name}' setting volume to {volume}...")
         control.set_volume(target_ip, volume)
         time.sleep(1)
-        print(f"[Scheduler] '{speaker_name}' playing preset {preset}...")
-        control.play_preset(target_ip, preset)
+        if source == "AUX":
+            print(f"[Scheduler] '{speaker_name}' switching to AUX input...")
+            control.send_key(target_ip, "AUX_INPUT")
+        else:
+            print(f"[Scheduler] '{speaker_name}' playing preset {preset}...")
+            control.play_preset(target_ip, preset)
 
 def auto_off_job(speaker_name):
     print(f"[Scheduler] Auto-OFF triggered for '{speaker_name}'...")
@@ -189,7 +193,7 @@ def run_scheduler_loop():
                     if current_time_str == on_time:
                         threading.Thread(
                             target=auto_on_job, 
-                            args=(speaker_name, schedule.get("preset", 1), schedule.get("volume", 20)), 
+                            args=(speaker_name, schedule.get("preset", 1), schedule.get("volume", 20), schedule.get("source")), 
                             daemon=True
                         ).start()
                         

@@ -66,3 +66,15 @@ This is an independent, component-based breakdown of the steps required to build
   - [X] Implement robust day-of-week parsing in `app/scheduler/jobs.py` during `run_scheduler_loop()`.
   - [X] Update Swagger UI definitions in `app/api/routes.py` to allow the new `"days"` query parameter as an explicit string array.
   - [X] Update Automated tests (`tests/test_api.py`) where applicable to ensure we don't regress.
+
+- [X] **Phase 13: CI/CD Pipeline Refactor**
+  - [X] Redesign `docker-publish.yml` to trigger on main branch pushes or tags.
+  - [X] Replaced `metadata-action` plugin with robust POSIX shell tag verification and extraction.
+  - [X] Hardcoded explicit `:latest` and `:<tag>` references into the Docker push step.
+
+- [X] **Phase 14: AUX Audio Source Support**
+  - [X] Update `deployment/config.json` default properties to include `"source": "AUX"` example.
+  - [X] Update Swagger UI definitions in `app/api/routes.py` to allow the new `"source"` property.
+  - [X] Implement robust `source` parsing in `app/scheduler/jobs.py` during `run_scheduler_loop()`.
+  - [X] Update `app/core/control.py` to support `AUX_INPUT` action.
+  - [X] Update `README.md` to explain the new property.

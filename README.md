@@ -8,7 +8,7 @@ This service finds Bose speakers on your local network. It turns them on when yo
 If a speaker is already playing music during a scheduled start time, the service will not interrupt it.
 
 ## The Schedule
-You provide a simple JSON schedule. The app reads it and does the work. You can optionally specify which days a routine should run (if omitted, it runs every day).
+You provide a simple JSON schedule. The app reads it and does the work. You can optionally specify which days a routine should run (if omitted, it runs every day). You can also add `"source": "AUX"` to play from the AUX cable instead of a preset station.
 
 ```json
 {
@@ -42,7 +42,7 @@ Open your browser to `http://<your-ip>:5000/apidocs` to see the live API manual.
 It runs perfectly in a Synology NAS Docker environment.
 
 1. **Host Network:** Run the Docker container in "Host" network mode. This is required to find speakers.
-2. **Mount Config:** Map `./config.json` to `/app/config.json`. The app writes schedule changes here. It will not break your file link.
+2. **Mount Config:** Map `deployment/config.json` to `/app/config.json`. The app writes schedule changes here. It will not break your file link.
 
 ## Documentation
 This tool uses the official Bose SoundTouch Web API.

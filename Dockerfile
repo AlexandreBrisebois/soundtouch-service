@@ -7,8 +7,7 @@ WORKDIR /workspace
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Provide a base config structure inside the container (can be mapped over)
-COPY config.json ./
+
 
 # Copy the structured application package
 COPY app/ ./app/
