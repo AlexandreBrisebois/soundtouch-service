@@ -523,6 +523,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
         <span id="form-back-label">Back</span>
       </button>
+      <div class="header-title" id="form-title">Add Schedule</div>
     </div>
 
     <div class="form-body">
@@ -582,6 +583,7 @@
           <button class="preset-pill" data-preset="4">4</button>
           <button class="preset-pill" data-preset="5">5</button>
           <button class="preset-pill" data-preset="6">6</button>
+          <button class="preset-pill" data-preset="AUX" style="flex:1.5">AUX</button>
         </div>
       </div>
 
@@ -668,9 +670,10 @@ let currentSchedules   = [];   // array from config
 let moreTargetSchedule = null; // {name, paused}
 let fadeIn  = 5;               // minutes
 let fadeOut = 1;               // minutes
-let selectedPreset = 1;        // null or 1-6
+let selectedPreset = 1;        // 1-6 or "AUX"
 let nameAutoManaged = true;    // whether name tracks on-time
 let allSchedules    = {};      // {speakerName: [schedules]}
+let editingSchedule = null;    // null or the schedule object being edited
 
 /* ─── View router ────────────────────────────────────────────────── */
 const views = {
@@ -774,8 +777,8 @@ async function fetchSpeakerStatus(speakerName) {
   try {
     const res  = await fetch(`/api/${encodeURIComponent(speakerName)}/status`);
     const data = await res.json();
-    const st   = (data.status || '').toUpperCase();
-    const playing = st !== 'STANDBY' && st !== '' && st !== 'ERROR';
+    const statusTxt = data.status || 'OFFLINE';
+    const playing   = statusTxt === 'Playing' || statusTxt === 'Buffering';
     speakerStatuses[speakerName] = playing ? 'playing' : 'standby';
 
     const dot    = document.getElementById(`dot-${speakerName}`);
@@ -783,7 +786,13 @@ async function fetchSpeakerStatus(speakerName) {
     const card   = document.getElementById(`card-${speakerName}`);
     
     if (dot)   { dot.className = `status-dot ${playing ? 'on' : 'off'}`; }
-    if (label) { label.textContent = playing ? `Playing · ${st}` : 'Standby'; }
+    if (label) { 
+      let display = statusTxt;
+      if (playing && data.source && data.source !== 'STANDBY') {
+        display = `${statusTxt} · ${data.source}`;
+      }
+      label.textContent = display;
+    }
     if (card)  { card.classList.toggle('playing', playing); }
     
     // Update active count in header
@@ -801,8 +810,20 @@ async function fetchSpeakerStatus(speakerName) {
 async function openSpeaker(name) {
   currentSpeaker = name;
   document.getElementById('detail-speaker-name').textContent = name;
-  document.getElementById('detail-speaker-status').textContent =
-    speakerStatuses[name] === 'playing' ? 'Playing' : 'Standby';
+  
+  // Dynamic status update for detail view
+  try {
+     const res = await fetch(`/api/${encodeURIComponent(name)}/status`);
+     const data = await res.json();
+     let display = data.status || 'Standby';
+     if (data.source && data.source !== 'STANDBY') {
+       display = `${data.status} · ${data.source}`;
+       if (data.track) display += `<br><span style="color:var(--text-muted);font-size:12px;font-weight:400">${data.track}${data.artist ? ` — ${data.artist}` : ''}</span>`;
+     }
+     document.getElementById('detail-speaker-status').innerHTML = display;
+  } catch {
+     document.getElementById('detail-speaker-status').textContent = 'Offline';
+  }
   showView('speaker');
   loadSchedules();
 }
@@ -841,8 +862,9 @@ function renderSchedules() {
 
     const card = document.createElement('div');
     card.className = `schedule-card${isPaused ? ' paused' : ''}`;
+    card.style.cursor = 'pointer';
     card.innerHTML = `
-      <div class="schedule-card-body">
+      <div class="schedule-card-body" onclick="openForm(${JSON.stringify(s).replace(/"/g, '&quot;')})">
         <div class="schedule-name">
           ${s.name}
           ${isPaused ? '<span class="paused-badge">Paused</span>' : ''}
@@ -861,6 +883,10 @@ function renderSchedules() {
              </button>`}
         <button class="btn-more" data-name="${s.name}" data-paused="${isPaused}">···</button>
       </div>`;
+
+    card.querySelector('.schedule-card-body').addEventListener('click', (e) => {
+      // openForm already handled by onclick for simplicity with JSON data
+    });
 
     if (isPaused) {
       card.querySelector('.btn-resume').addEventListener('click', () => resumeSchedule(s.name));
@@ -959,39 +985,89 @@ document.getElementById('sheet-btn-confirm-all-off').addEventListener('click', a
   toast('All speakers turned off');
 });
 
-/* ─── SCREEN 3: ADD SCHEDULE ─────────────────────────────────────── */
+/* ─── SCREEN 3: ADD/EDIT SCHEDULE ────────────────────────────────── */
 function openAddForm() {
-  nameAutoManaged = true;
-  fadeIn  = 5;
-  fadeOut = 1;
-  selectedPreset = 1;
+  openForm();
+}
 
-  // Reset fields
-  document.getElementById('f-on').value     = '06:15';
-  document.getElementById('f-off').value    = '07:30';
-  document.getElementById('f-volume').value = '10';
-  document.getElementById('vol-display').textContent = '10';
-  document.getElementById('f-name').value   = nameFromTime('06:15');
-  document.getElementById('fade-in-display').textContent  = '5 min';
-  document.getElementById('fade-out-display').textContent = '1 min';
+function openForm(data = null) {
+  editingSchedule = data;
+  nameAutoManaged = !data;
+  
+  const title = document.getElementById('form-title');
+  const btn   = document.getElementById('btn-save');
+  
+  if (data) {
+    title.textContent = 'Edit Schedule';
+    btn.textContent   = 'Update Schedule';
+    
+    document.getElementById('f-name').value   = data.name;
+    document.getElementById('f-on').value     = data.on_time;
+    document.getElementById('f-off').value    = data.off_time;
+    document.getElementById('f-volume').value = data.volume;
+    document.getElementById('vol-display').textContent = data.volume;
+    
+    fadeIn  = (data.fade_in_duration  || 300) / 60;
+    fadeOut = (data.fade_out_duration || 60)  / 60;
+    document.getElementById('fade-in-display').textContent  = `${fadeIn} min`;
+    document.getElementById('fade-out-display').textContent = `${fadeOut} min`;
 
-  // Weekdays default
-  document.querySelectorAll('.day-chip').forEach(c => {
-    const day = c.dataset.day;
-    const isWeekday = !['saturday','sunday'].includes(day);
-    c.classList.toggle('active', isWeekday);
-  });
-  document.querySelectorAll('.chip-quick').forEach(c => c.classList.remove('active'));
-  document.querySelector('[data-quick="weekdays"]').classList.add('active');
+    // Days
+    const days = data.days || [];
+    document.querySelectorAll('.day-chip').forEach(c => {
+      c.classList.toggle('active', days.includes(c.dataset.day));
+    });
+    updateQuickChips(days);
 
-  // Preset
-  document.querySelectorAll('.preset-pill').forEach(p => {
-    p.classList.toggle('active', p.dataset.preset === '1');
-  });
+    // Preset / AUX
+    selectedPreset = data.source === 'AUX' ? 'AUX' : (data.preset || 1);
+    document.querySelectorAll('.preset-pill').forEach(p => {
+      p.classList.toggle('active', p.dataset.preset == selectedPreset);
+    });
+
+  } else {
+    title.textContent = 'Add Schedule';
+    btn.textContent   = 'Save Schedule';
+    
+    document.getElementById('f-on').value     = '06:15';
+    document.getElementById('f-off').value    = '07:30';
+    document.getElementById('f-volume').value = '10';
+    document.getElementById('vol-display').textContent = '10';
+    document.getElementById('f-name').value   = nameFromTime('06:15');
+    
+    fadeIn  = 5;
+    fadeOut = 1;
+    document.getElementById('fade-in-display').textContent  = '5 min';
+    document.getElementById('fade-out-display').textContent = '1 min';
+
+    // Weekdays default
+    const defaultDays = ['monday','tuesday','wednesday','thursday','friday'];
+    document.querySelectorAll('.day-chip').forEach(c => {
+      c.classList.toggle('active', defaultDays.includes(c.dataset.day));
+    });
+    updateQuickChips(defaultDays);
+
+    // Preset default
+    selectedPreset = 1;
+    document.querySelectorAll('.preset-pill').forEach(p => {
+      p.classList.toggle('active', p.dataset.preset === '1');
+    });
+  }
 
   document.getElementById('form-back-label').textContent = currentSpeaker;
   validateForm();
   showView('form');
+}
+
+function updateQuickChips(days) {
+  const isWeekdays = days.length === 5 && days.every(d => !['saturday','sunday'].includes(d));
+  const isWeekends = days.length === 2 && days.every(d => ['saturday','sunday'].includes(d));
+  const isAll      = days.length === 7;
+
+  document.querySelectorAll('.chip-quick').forEach(c => c.classList.remove('active'));
+  if (isWeekdays) document.querySelector('[data-quick="weekdays"]').classList.add('active');
+  if (isWeekends) document.querySelector('[data-quick="weekends"]').classList.add('active');
+  if (isAll)      document.querySelector('[data-quick="all"]').classList.add('active');
 }
 
 /* Day chips */
@@ -1091,27 +1167,39 @@ document.getElementById('btn-save').addEventListener('click', async () => {
     on_time:          onTime,
     off_time:         offTime,
     volume,
-    preset:           selectedPreset,
+    preset:           selectedPreset === 'AUX' ? null : Number(selectedPreset),
+    source:           selectedPreset === 'AUX' ? 'AUX' : null,
     fade_in_duration:  fadeIn  * 60,
     fade_out_duration: fadeOut * 60,
-    paused: false,
+    paused: editingSchedule ? editingSchedule.paused : false,
   };
 
   try {
+    // If renaming an existing schedule, delete the old name first
+    if (editingSchedule && editingSchedule.name !== name) {
+      await fetch(`/api/${encodeURIComponent(currentSpeaker)}/schedules/${encodeURIComponent(editingSchedule.name)}`, {
+        method: 'DELETE'
+      });
+    }
+
     const res = await fetch(`/api/${encodeURIComponent(currentSpeaker)}/schedules`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(payload)
     });
+
     if (res.ok || res.status === 202) {
-      toast('Schedule saved');
+      toast(editingSchedule ? 'Schedule updated' : 'Schedule added');
       showView('speaker');
-      // Wait a beat for the queue to process, then reload
       setTimeout(loadSchedules, 600);
     } else {
       toast('Could not save — check inputs');
     }
   } catch { toast('Network error'); }
+  finally {
+    btn.disabled = false;
+    btn.textContent = editingSchedule ? 'Update Schedule' : 'Save Schedule';
+  }
 });
 
 /* ─── Navigation ─────────────────────────────────────────────────── */
@@ -1133,6 +1221,13 @@ window.addEventListener('load', () => {
   loadHub();
   setTimeout(() => { splash.classList.add('hidden'); }, 800);
   setTimeout(() => { splash.style.display = 'none'; },  1500);
+
+  // Register service worker
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js')
+      .then(reg => console.log('SW Registered', reg))
+      .catch(err => console.log('SW Registration Failed', err));
+  }
 });
 </script>
 </body>

@@ -120,14 +120,15 @@ def auto_on_job(speaker_name, preset, volume, source=None, fade_in_duration=300)
         print(f"[Scheduler] '{speaker_name}' not found on the local network. Aborting.")
         return
 
-    speaker_status = status.get_now_playing(target_ip)
+    status_data = status.get_now_playing(target_ip)
+    speaker_status = status_data.get("status", "OFFLINE")
     print(f"[Scheduler] '{speaker_name}' current status is '{speaker_status}'")
     
-    if speaker_status != "STANDBY":
+    if speaker_status != "STANDBY" and speaker_status != "OFFLINE":
         print(f"[Scheduler] '{speaker_name}' is already active. Ignoring ON event to prevent interruption.")
         return
         
-    print(f"[Scheduler] '{speaker_name}' is STANDBY. Turning on...")
+    print(f"[Scheduler] '{speaker_name}' is {speaker_status}. Turning on...")
     if control.power_action(target_ip):
         # Wait a moment for speaker to boot and accept additional commands
         time.sleep(3)
@@ -154,8 +155,8 @@ def auto_on_job(speaker_name, preset, volume, source=None, fade_in_duration=300)
             time.sleep(sleep_interval)
             
             if v % 5 == 0 or sleep_interval > 5:
-                current_state = status.get_now_playing(target_ip)
-                if current_state == "STANDBY":
+                status_data = status.get_now_playing(target_ip)
+                if status_data.get("status") == "STANDBY":
                     print(f"[Scheduler] Fade-in aborted: '{speaker_name}' was manually turned off mid-fade.")
                     return
                     
@@ -177,10 +178,11 @@ def auto_off_job(speaker_name, fade_out_duration=60):
         print(f"[Scheduler] '{speaker_name}' not found on the local network. Aborting.")
         return
 
-    speaker_status = status.get_now_playing(target_ip)
+    status_data = status.get_now_playing(target_ip)
+    speaker_status = status_data.get("status", "OFFLINE")
     print(f"[Scheduler] '{speaker_name}' current status is '{speaker_status}'")
     
-    if speaker_status != "STANDBY":
+    if speaker_status != "STANDBY" and speaker_status != "OFFLINE":
         print(f"[Scheduler] Speaker is active. Starting volume fade-out over {fade_out_duration}s.")
         
         current_volume = status.get_volume(target_ip)
@@ -190,7 +192,8 @@ def auto_off_job(speaker_name, fade_out_duration=60):
                 time.sleep(sleep_interval)
                 
                 if v % 5 == 0 or sleep_interval > 5:
-                    if status.get_now_playing(target_ip) == "STANDBY":
+                    status_data = status.get_now_playing(target_ip)
+                    if status_data.get("status") == "STANDBY":
                         print(f"[Scheduler] Fade-out aborted: '{speaker_name}' was already turned off.")
                         return
                         

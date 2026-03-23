@@ -1,0 +1,43 @@
+{
+    "Target Speaker 1": [
+        {
+            "name": "Morning Routine",
+            "days": [
+                "monday",
+                "tuesday",
+                "wednesday",
+                "thursday",
+                "friday",
+                "saturday",
+                "sunday"
+            ],
+            "on_time": "06:15",
+            "off_time": "07:30",
+            "preset": 1,
+            "volume": 10,
+            "fade_in_duration": 300,
+            "fade_out_duration": 60,
+            "paused": false
+        }
+    ],
+    "Living Room": [
+        {
+            "name": "Evening Routine",
+            "days": [
+                "monday",
+                "tuesday",
+                "wednesday",
+                "thursday",
+                "friday"
+            ],
+            "on_time": "17:05",
+            "off_time": "19:30",
+            "volume": 30,
+            "preset": 5,
+            "source": null,
+            "fade_in_duration": 300,
+            "fade_out_duration": 60,
+            "paused": false
+        }
+    ]
+}
