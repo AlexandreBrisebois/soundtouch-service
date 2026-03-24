@@ -2,6 +2,7 @@ import os
 from flask import Flask
 from flasgger import Swagger
 from app.api.routes import api_bp
+from app.core import discovery, speaker_cache
 from app.scheduler import jobs
 
 def create_app():
@@ -25,6 +26,12 @@ def create_app():
     
     # Start the background dynamic scheduler as a daemon thread
     jobs.start_daemon()
+    
+    # Start the device IP cache (one mDNS scan now, refresh every 5 min)
+    discovery.start_device_cache()
+    
+    # Start WebSocket listeners for each speaker found in the cache
+    speaker_cache.start_ws_listeners(discovery.get_all_cached_devices())
     
     return app_instance
 

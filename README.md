@@ -49,6 +49,15 @@ To ensure a gentle experience, the app supports volume fading:
 }
 ```
 
+## Performance Architecture
+
+To ensure a snappy experience, the app uses a two-layer server-side cache:
+
+1. **Device IP Cache:** Eliminates 3-5 second mDNS discovery delays by caching speaker IPs in memory. Refreshes every 5 minutes in the background.
+2. **WebSocket Push:** Subscribes to real-time status updates from each speaker on port 8080 (`gabbo` protocol). The UI reads from an in-memory state store, allowing for **sub-100ms status responses** without polling the speakers directly.
+
+Opening the Hub page now displays live status for all speakers almost instantly.
+
 ## The API
 
 You do not have to edit the file by hand. The app provides a fast REST API. You can add, update, and delete schedules over your network. Data saves safely through a background queue. Your files will not corrupt.

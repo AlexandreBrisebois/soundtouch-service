@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request, render_template, current_app
-from app.core import discovery, status, control
+from app.core import discovery, status, control, speaker_cache
 from app.scheduler import jobs
 
 api_bp = Blueprint('api', __name__)
@@ -209,13 +209,15 @@ def api_resume_schedule(speaker_name, schedule_name):
 def api_discover():
     """
     Discover SoundTouch Speakers
-    Perform a mDNS zero-configuration broadcast to find all local speakers on the network.
+    Return all cached speakers from the background mDNS discovery. Force a cache refresh with ?refresh=true.
     ---
     responses:
       200:
         description: A list of discovered devices containing their names and IP addresses.
     """
-    devices = discovery.discover_systems(timeout=3)
+    if request.args.get("refresh", "").lower() == "true":
+        discovery.refresh_cache()
+    devices = discovery.get_all_cached_devices()
     return jsonify(devices)
 
 @api_bp.route("/api/<speaker_name>/status", methods=["GET"])
@@ -236,13 +238,19 @@ def api_status(speaker_name):
       404:
         description: Speaker not found on the local network.
     """
-    devices = discovery.discover_systems(timeout=3)
-    for d in devices:
-        if d['name'] == speaker_name:
-            status_data = status.get_now_playing(d['ip'])
-            volume      = status.get_volume(d['ip'])
-            return jsonify({"speaker": speaker_name, "ip": d['ip'], "volume": volume, **status_data})
-    return jsonify({"error": "Speaker not found"}), 404
+    ip = discovery.get_device_ip(speaker_name)
+    if not ip:
+        return jsonify({"error": "Speaker not found"}), 404
+        
+    # Phase 2: Prioritize memory cache (WebSocket push)
+    cached = speaker_cache.get_speaker_state(speaker_name)
+    if cached:
+        return jsonify({"speaker": speaker_name, "ip": ip, **cached})
+        
+    # Fallback status check if cache not ready
+    status_data = status.get_now_playing(ip)
+    volume      = status.get_volume(ip)
+    return jsonify({"speaker": speaker_name, "ip": ip, "volume": volume, **status_data})
 
 @api_bp.route("/api/<speaker_name>/power", methods=["POST"])
 def api_power(speaker_name):
@@ -262,12 +270,11 @@ def api_power(speaker_name):
       404:
         description: Speaker not found on the local network.
     """
-    devices = discovery.discover_systems(timeout=3)
-    for d in devices:
-        if d['name'] == speaker_name:
-            control.power_action(d['ip'])
-            return jsonify({"message": f"Sent POWER toggle signal to {speaker_name} at {d['ip']}"})
-    return jsonify({"error": "Speaker not found"}), 404
+    ip = discovery.get_device_ip(speaker_name)
+    if not ip:
+        return jsonify({"error": "Speaker not found"}), 404
+    control.power_action(ip)
+    return jsonify({"message": f"Sent POWER toggle signal to {speaker_name} at {ip}"})
 
 @api_bp.route("/api/<speaker_name>/preset/<int:preset_id>", methods=["POST"])
 def api_preset(speaker_name, preset_id):
@@ -292,12 +299,11 @@ def api_preset(speaker_name, preset_id):
       404:
         description: Speaker not found on the local network.
     """
-    devices = discovery.discover_systems(timeout=3)
-    for d in devices:
-        if d['name'] == speaker_name:
-            control.play_preset(d['ip'], preset_num=preset_id)
-            return jsonify({"message": f"Playing PRESET_{preset_id} on {speaker_name} at {d['ip']}"})
-    return jsonify({"error": "Speaker not found"}), 404
+    ip = discovery.get_device_ip(speaker_name)
+    if not ip:
+        return jsonify({"error": "Speaker not found"}), 404
+    control.play_preset(ip, preset_num=preset_id)
+    return jsonify({"message": f"Playing PRESET_{preset_id} on {speaker_name} at {ip}"})
 
 @api_bp.route("/api/<speaker_name>/volume", methods=["POST"])
 def api_volume(speaker_name):
@@ -328,9 +334,8 @@ def api_volume(speaker_name):
     """
     data = request.json
     vol = data.get("volume", 20) if data else 20
-    devices = discovery.discover_systems(timeout=3)
-    for d in devices:
-        if d['name'] == speaker_name:
-            control.set_volume(d['ip'], vol)
-            return jsonify({"message": f"Set volume to {vol}% on {speaker_name} at {d['ip']}"})
-    return jsonify({"error": "Speaker not found"}), 404
+    ip = discovery.get_device_ip(speaker_name)
+    if not ip:
+        return jsonify({"error": "Speaker not found"}), 404
+    control.set_volume(ip, vol)
+    return jsonify({"message": f"Set volume to {vol}% on {speaker_name} at {ip}"})

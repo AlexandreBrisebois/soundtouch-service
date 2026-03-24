@@ -108,16 +108,10 @@ def config_io_worker():
 
 def auto_on_job(speaker_name, preset, volume, source=None, fade_in_duration=300):
     print(f"[Scheduler] Auto-ON triggered for '{speaker_name}'...")
-    devices = discovery.discover_systems(timeout=5)
-    
-    target_ip = None
-    for d in devices:
-        if d['name'] == speaker_name:
-            target_ip = d['ip']
-            break
-            
+    target_ip = discovery.get_device_ip(speaker_name)
+
     if not target_ip:
-        print(f"[Scheduler] '{speaker_name}' not found on the local network. Aborting.")
+        print(f"[Scheduler] '{speaker_name}' not found in cache or on network. Aborting.")
         return
 
     status_data = status.get_now_playing(target_ip)
@@ -166,16 +160,10 @@ def auto_on_job(speaker_name, preset, volume, source=None, fade_in_duration=300)
 
 def auto_off_job(speaker_name, fade_out_duration=60):
     print(f"[Scheduler] Auto-OFF triggered for '{speaker_name}'...")
-    devices = discovery.discover_systems(timeout=5)
-    
-    target_ip = None
-    for d in devices:
-        if d['name'] == speaker_name:
-            target_ip = d['ip']
-            break
-            
+    target_ip = discovery.get_device_ip(speaker_name)
+
     if not target_ip:
-        print(f"[Scheduler] '{speaker_name}' not found on the local network. Aborting.")
+        print(f"[Scheduler] '{speaker_name}' not found in cache or on network. Aborting.")
         return
 
     status_data = status.get_now_playing(target_ip)
