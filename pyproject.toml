@@ -1,0 +1,25 @@
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+exclude = [
+  "venv",
+]
+
+[tool.ruff.lint]
+select = [
+  "E4",
+  "E7",
+  "E9",
+  "F",
+  "B",
+]
+
+[tool.mypy]
+python_version = "3.14"
+ignore_missing_imports = true
+disable_error_code = ["import-untyped"]
+files = [
+  "app/core/http_client.py",
+  "app/core/control.py",
+  "app/core/status.py",
+]

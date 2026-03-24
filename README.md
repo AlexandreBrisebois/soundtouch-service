@@ -156,6 +156,18 @@ For best performance on a **Synology NAS**, run the container in **Host Network 
 - [Code of Conduct](CODE_OF_CONDUCT.md)
 - [Changelog](CHANGELOG.md)
 
+## 🧰 Developer Quality Gates
+
+Wisp enforces lightweight quality checks in CI and supports the same checks locally.
+
+```bash
+pip install -r requirements.txt ruff mypy pre-commit
+pre-commit install
+pre-commit run --all-files
+```
+
+Tooling configuration lives in `pyproject.toml` and CI runs the same checks from `.github/workflows/tests.yml`.
+
 ---
 
 *Built with ❤️ for the Bose SoundTouch community.*

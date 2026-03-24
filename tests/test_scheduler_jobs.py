@@ -1,4 +1,5 @@
 from app.scheduler import jobs
+import json
 
 
 def test_auto_on_job_force_from_standby_applies_preset_then_fade(monkeypatch):
@@ -196,6 +197,71 @@ def test_sanitize_config_normalizes_legacy_entries():
                 "fade_in_duration": 15.0,
                 "fade_out_duration": 0.0,
                 "paused": True,
+            }
+        ]
+    }
+
+
+def test_load_config_migrates_legacy_document_to_versioned_format(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.json"
+    legacy = {
+        "Living Room": [
+            {
+                "name": "Morning",
+                "days": ["monday"],
+                "on_time": "06:15",
+                "off_time": "07:00",
+                "preset": 1,
+                "volume": 10,
+            }
+        ]
+    }
+    config_path.write_text(json.dumps(legacy), encoding="utf-8")
+    monkeypatch.setattr(jobs, "CONFIG_FILE_PATH", config_path)
+
+    loaded = jobs.load_config()
+    assert loaded is not None
+    assert "Living Room" in loaded
+
+    document = json.loads(config_path.read_text(encoding="utf-8"))
+    assert document["version"] == jobs.CONFIG_SCHEMA_VERSION
+    assert "schedules" in document
+
+
+def test_load_config_reads_versioned_document(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.json"
+    versioned = {
+        "version": jobs.CONFIG_SCHEMA_VERSION,
+        "schedules": {
+            "Bedroom": [
+                {
+                    "name": "Wind Down",
+                    "days": ["sunday"],
+                    "on_time": "21:00",
+                    "off_time": "22:00",
+                    "source": "AUX",
+                    "volume": 15,
+                }
+            ]
+        },
+    }
+    config_path.write_text(json.dumps(versioned), encoding="utf-8")
+    monkeypatch.setattr(jobs, "CONFIG_FILE_PATH", config_path)
+
+    loaded = jobs.load_config()
+    assert loaded == {
+        "Bedroom": [
+            {
+                "name": "Wind Down",
+                "days": ["sunday"],
+                "on_time": "21:00",
+                "off_time": "22:00",
+                "preset": None,
+                "source": "AUX",
+                "volume": 15,
+                "fade_in_duration": jobs.DEFAULT_FADE_IN_DURATION_SECONDS,
+                "fade_out_duration": jobs.DEFAULT_FADE_OUT_DURATION_SECONDS,
+                "paused": False,
             }
         ]
     }

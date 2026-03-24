@@ -32,7 +32,7 @@ jobs:
         run: ruff check app tests
 
       - name: Run MyPy
-        run: mypy app/core/http_client.py app/core/control.py app/core/status.py --ignore-missing-imports --disable-error-code=import-untyped
+        run: mypy
 
       - name: Run test suite
         run: pytest -q

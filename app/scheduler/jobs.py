@@ -6,6 +6,7 @@ import threading
 import queue
 import re
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any
 from app.core.constants import (
     DEFAULT_FADE_IN_DURATION_SECONDS,
@@ -19,8 +20,9 @@ from app.core.constants import (
 )
 from app.core import discovery, status, control
 
-CONFIG_FILE = os.getenv("CONFIG_FILE", "config.json")
-config_queue = queue.Queue()
+CONFIG_FILE_PATH = Path(os.getenv("CONFIG_FILE", "config.json"))
+CONFIG_SCHEMA_VERSION = 1
+config_queue: queue.Queue[dict[str, Any] | None] = queue.Queue()
 VALID_DAYS = {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
 TIME_PATTERN = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 BACKGROUND_WORKER_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="jobs-bg")
@@ -31,6 +33,10 @@ SpeakerSchedules = dict[str, list[Schedule]]
 # In-memory config accessed by scheduler and API GETs
 current_config: SpeakerSchedules = {}
 logger = logging.getLogger(__name__)
+_stop_event = threading.Event()
+_daemon_lock = threading.Lock()
+_config_worker_thread: threading.Thread | None = None
+_scheduler_thread: threading.Thread | None = None
 
 def get_default_config() -> SpeakerSchedules:
     return {
@@ -162,27 +168,67 @@ def sanitize_config(config: Any) -> SpeakerSchedules | None:
 
     return sanitized
 
+
+def _build_config_document(config: SpeakerSchedules) -> dict[str, Any]:
+    return {
+        "version": CONFIG_SCHEMA_VERSION,
+        "schedules": config,
+    }
+
+
+def _extract_schedules(raw_data: Any) -> SpeakerSchedules | None:
+    if not isinstance(raw_data, dict):
+        return sanitize_config(raw_data)
+
+    if "schedules" not in raw_data:
+        # Legacy format where the root object is the schedules map.
+        return sanitize_config(raw_data)
+
+    file_version = raw_data.get("version")
+    if file_version != CONFIG_SCHEMA_VERSION:
+        logger.info(
+            "Loading config schema version '%s' with compatibility mode (current=%s).",
+            file_version,
+            CONFIG_SCHEMA_VERSION,
+        )
+    return sanitize_config(raw_data.get("schedules"))
+
+
+def _write_config(config: SpeakerSchedules) -> None:
+    with CONFIG_FILE_PATH.open("w") as f:
+        json.dump(_build_config_document(config), f, indent=4)
+        f.flush()
+        os.fsync(f.fileno())
+
 def load_config() -> SpeakerSchedules | None:
-    if not os.path.exists(CONFIG_FILE):
+    if not CONFIG_FILE_PATH.exists():
         default_config = get_default_config()
         try:
-            with open(CONFIG_FILE, "w") as f:
-                json.dump(default_config, f, indent=4)
+            _write_config(default_config)
         except Exception as e:
-            logger.error("Error creating config file %s: %s", CONFIG_FILE, e)
+            logger.error("Error creating config file %s: %s", CONFIG_FILE_PATH, e)
         return default_config
         
     try:
-        with open(CONFIG_FILE, "r") as f:
-            return sanitize_config(json.load(f))
+        with CONFIG_FILE_PATH.open("r") as f:
+            raw_data = json.load(f)
+            config = _extract_schedules(raw_data)
+            if config is None:
+                return None
+
+            # Auto-migrate legacy config format to versioned document.
+            if isinstance(raw_data, dict) and "schedules" not in raw_data:
+                _write_config(config)
+                logger.info("Migrated legacy config to schema version %s.", CONFIG_SCHEMA_VERSION)
+            return config
     except Exception as e:
-        logger.error("Error reading config file %s: %s", CONFIG_FILE, e)
+        logger.error("Error reading config file %s: %s", CONFIG_FILE_PATH, e)
         return None
 
 def config_io_worker() -> None:
     """Background thread to process configuration changes sequentially."""
     logger.info("Started background config writer thread.")
-    while True:
+    while not _stop_event.is_set():
         mutation = config_queue.get()
         try:
             if mutation is None:
@@ -232,10 +278,7 @@ def config_io_worker() -> None:
             # To maintain the data link to the Synology Host, we write directly to the 
             # opened file object, which truncates and overwrites the existing inode inline. 
             # -----------------------------------------------------------------
-            with open(CONFIG_FILE, "w") as f:
-                json.dump(config, f, indent=4)
-                f.flush()
-                os.fsync(f.fileno())
+            _write_config(config)
             
             logger.info("Applied config mutation '%s' for speaker '%s' schedule '%s'.", action, speaker, schedule_name)
             
@@ -361,13 +404,13 @@ def submit_background_task(func: Any, *args: Any, **kwargs: Any) -> None:
 def run_scheduler_loop() -> None:
     global current_config
     current_config = load_config() or {}
-    logger.info("Scheduler initialized. Dynamic configuration loaded from '%s'.", CONFIG_FILE)
+    logger.info("Scheduler initialized. Dynamic configuration loaded from '%s'.", CONFIG_FILE_PATH)
     for speaker, schedules in current_config.items():
         if isinstance(schedules, list):
             logger.info("Loaded %s schedule(s) for '%s': %s", len(schedules), speaker, [s.get('name') for s in schedules])
     last_processed_minute = None
     
-    while True:
+    while not _stop_event.is_set():
         now = time.localtime()
         current_time_str = time.strftime("%H:%M", now)
         current_day = time.strftime("%A", now).lower()
@@ -408,12 +451,42 @@ def run_scheduler_loop() -> None:
                         logger.info("[%s] '%s' for '%s' OFF event triggered (fade=%ss).", current_time_str, schedule.get('name'), speaker_name, fade_out_duration)
                         submit_background_task(auto_off_job, speaker_name, fade_out_duration)
                     
-        time.sleep(SCHEDULER_LOOP_INTERVAL_SECONDS)
+        _stop_event.wait(SCHEDULER_LOOP_INTERVAL_SECONDS)
 
 def start_daemon() -> None:
-    # Keep long-running loops on dedicated daemon threads.
-    threading.Thread(target=config_io_worker, daemon=True).start()
-    threading.Thread(target=run_scheduler_loop, daemon=True).start()
+    global _config_worker_thread, _scheduler_thread
+
+    with _daemon_lock:
+        if _config_worker_thread and _config_worker_thread.is_alive() and _scheduler_thread and _scheduler_thread.is_alive():
+            return
+
+        _stop_event.clear()
+
+        if _config_worker_thread is None or not _config_worker_thread.is_alive():
+            _config_worker_thread = threading.Thread(target=config_io_worker, daemon=True)
+            _config_worker_thread.start()
+
+        if _scheduler_thread is None or not _scheduler_thread.is_alive():
+            _scheduler_thread = threading.Thread(target=run_scheduler_loop, daemon=True)
+            _scheduler_thread.start()
+
+
+def shutdown_daemon(timeout: float = 3.0) -> None:
+    global _config_worker_thread, _scheduler_thread
+
+    with _daemon_lock:
+        _stop_event.set()
+        config_queue.put(None)
+
+        if _config_worker_thread is not None:
+            _config_worker_thread.join(timeout=timeout)
+            _config_worker_thread = None
+
+        if _scheduler_thread is not None:
+            _scheduler_thread.join(timeout=timeout)
+            _scheduler_thread = None
+
+    BACKGROUND_WORKER_POOL.shutdown(wait=False, cancel_futures=True)
 
 def get_current_config() -> SpeakerSchedules:
     global current_config
