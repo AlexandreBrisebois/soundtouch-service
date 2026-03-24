@@ -54,6 +54,9 @@ if __name__ == "__main__":
 # ---------------------------------------------------------------------------
 _device_cache: dict[str, str] = {}       # name → IP
 _cache_lock = threading.Lock()
+_cache_refresh_thread: threading.Thread | None = None
+_cache_refresh_lock = threading.Lock()
+_cache_stop_event = threading.Event()
 
 def refresh_cache() -> None:
     """Run a single mDNS scan and update the cache atomically."""
@@ -92,26 +95,51 @@ def get_all_cached_devices() -> list[dict[str, str]]:
     with _cache_lock:
         return [{"name": n, "ip": ip} for n, ip in _device_cache.items()]
 
-def _cache_refresh_loop(on_refresh: Callable[[list[dict[str, str]]], None] | None = None, delay_first: bool = False) -> None:
+def _cache_refresh_loop(stop_event: threading.Event, on_refresh: Callable[[list[dict[str, str]]], None] | None = None, delay_first: bool = False) -> None:
     """Background loop: refresh cache every 5 minutes."""
-    if delay_first:
-        time.sleep(DISCOVERY_REFRESH_INTERVAL_SECONDS)
-    while True:
+    if delay_first and stop_event.wait(DISCOVERY_REFRESH_INTERVAL_SECONDS):
+        return
+    while not stop_event.is_set():
         refreshed = safe_refresh_cache()
         if refreshed and on_refresh is not None:
             on_refresh(get_all_cached_devices())
-        time.sleep(DISCOVERY_REFRESH_INTERVAL_SECONDS)
+        if stop_event.wait(DISCOVERY_REFRESH_INTERVAL_SECONDS):
+            break
 
 def start_device_cache(on_refresh: Callable[[list[dict[str, str]]], None] | None = None) -> None:
     """Start the background cache refresh thread. Call once at startup."""
-    initial_refresh_ok = safe_refresh_cache()
-    if initial_refresh_ok and on_refresh is not None:
-        on_refresh(get_all_cached_devices())
+    global _cache_refresh_thread
 
-    t = threading.Thread(
-        target=_cache_refresh_loop,
-        kwargs={"on_refresh": on_refresh, "delay_first": initial_refresh_ok},
-        daemon=True
-    )
-    t.start()
-    logger.info("Background discovery cache refresh thread started.")
+    with _cache_refresh_lock:
+        if _cache_refresh_thread is not None and _cache_refresh_thread.is_alive():
+            return
+
+        _cache_stop_event.clear()
+        initial_refresh_ok = safe_refresh_cache()
+        if initial_refresh_ok and on_refresh is not None:
+            on_refresh(get_all_cached_devices())
+
+        _cache_refresh_thread = threading.Thread(
+            target=_cache_refresh_loop,
+            kwargs={
+                "stop_event": _cache_stop_event,
+                "on_refresh": on_refresh,
+                "delay_first": initial_refresh_ok,
+            },
+            daemon=True,
+        )
+        _cache_refresh_thread.start()
+        logger.info("Background discovery cache refresh thread started.")
+
+
+def stop_device_cache(timeout: float = 3.0) -> None:
+    """Stop the background cache refresh thread if running."""
+    global _cache_refresh_thread
+
+    with _cache_refresh_lock:
+        _cache_stop_event.set()
+        thread = _cache_refresh_thread
+        _cache_refresh_thread = None
+
+    if thread is not None and thread.is_alive():
+        thread.join(timeout=timeout)

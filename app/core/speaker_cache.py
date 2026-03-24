@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 _speaker_state: dict[str, dict[str, Any]] = {}
 _state_lock = threading.Lock()
 _listener_threads: dict[str, threading.Thread] = {}
+_listener_stop_events: dict[str, threading.Event] = {}
+_listener_sockets: dict[str, websocket.WebSocketApp] = {}
 _listener_lock = threading.Lock()
 
 def get_speaker_state(name: str) -> dict[str, Any] | None:
@@ -65,13 +67,17 @@ def _on_error(ws: websocket.WebSocketApp, error: Exception, speaker_name: str) -
     logger.warning("WebSocket error for %s: %s", speaker_name, error)
 
 def _on_close(ws: websocket.WebSocketApp, close_status_code: int | None, close_msg: str | None, speaker_name: str) -> None:
-    logger.info("WebSocket closed for %s (code=%s, message=%s). Reconnecting in %ss.", speaker_name, close_status_code, close_msg, WEBSOCKET_CLOSE_RETRY_DELAY_SECONDS)
-    time.sleep(WEBSOCKET_CLOSE_RETRY_DELAY_SECONDS)
+    logger.info(
+        "WebSocket closed for %s (code=%s, message=%s).",
+        speaker_name,
+        close_status_code,
+        close_msg,
+    )
 
-def listen_to_speaker(name: str, ip: str) -> None:
+def listen_to_speaker(name: str, ip: str, stop_event: threading.Event) -> None:
     """Maintain a persistent WebSocket connection to a speaker."""
     initial_prime = True  # Track if this is the first attempt
-    while True:
+    while not stop_event.is_set():
         try:
             # 1. Prime the cache with initial HTTP reads on first connection only
             if initial_prime:
@@ -90,14 +96,26 @@ def listen_to_speaker(name: str, ip: str) -> None:
                 on_error=lambda ws, err: _on_error(ws, err, name),
                 on_close=lambda ws, code, msg: _on_close(ws, code, msg, name)
             )
+
+            with _listener_lock:
+                _listener_sockets[name] = ws
+
             logger.info("Connecting WebSocket listener for '%s'.", name)
             ws.run_forever(
                 ping_interval=WEBSOCKET_PING_INTERVAL_SECONDS,
                 ping_timeout=WEBSOCKET_PING_TIMEOUT_SECONDS,
             )
+
+            with _listener_lock:
+                if _listener_sockets.get(name) is ws:
+                    _listener_sockets.pop(name, None)
+
+            if stop_event.wait(WEBSOCKET_CLOSE_RETRY_DELAY_SECONDS):
+                break
         except Exception as e:
             logger.warning("WebSocket listener loop error for %s: %s. Retrying in %ss.", name, e, WEBSOCKET_LOOP_RETRY_DELAY_SECONDS)
-            time.sleep(WEBSOCKET_LOOP_RETRY_DELAY_SECONDS)
+            if stop_event.wait(WEBSOCKET_LOOP_RETRY_DELAY_SECONDS):
+                break
 
 def start_ws_listeners(devices: list[dict[str, str]]) -> None:
     """Start a listener thread for each discovered device."""
@@ -121,8 +139,35 @@ def start_ws_listeners(devices: list[dict[str, str]]) -> None:
                 # Double-check in case another thread started one
                 logger.debug("Listener already registered for '%s', skipping.", name)
                 continue
-            t = threading.Thread(target=listen_to_speaker, args=(name, ip), daemon=True)
+            stop_event = threading.Event()
+            t = threading.Thread(target=listen_to_speaker, args=(name, ip, stop_event), daemon=True)
+            _listener_stop_events[name] = stop_event
             _listener_threads[name] = t
         
         t.start()
         logger.info("Started WebSocket listener for '%s'.", name)
+
+
+def stop_ws_listeners(timeout: float = 3.0) -> None:
+    """Stop all speaker listener threads and close active sockets."""
+    with _listener_lock:
+        stop_events = list(_listener_stop_events.values())
+        threads = list(_listener_threads.values())
+        sockets = list(_listener_sockets.values())
+
+        _listener_stop_events.clear()
+        _listener_threads.clear()
+        _listener_sockets.clear()
+
+    for stop_event in stop_events:
+        stop_event.set()
+
+    for ws in sockets:
+        try:
+            ws.close()
+        except Exception as exc:
+            logger.debug("Ignoring socket close error during shutdown: %s", exc)
+
+    for thread in threads:
+        if thread.is_alive():
+            thread.join(timeout=timeout)
