@@ -123,4 +123,10 @@ This is an independent, component-based breakdown of the steps required to build
   - [x] **Verified 1000x Speedup** — `/status` response time dropped from ~10s to ~15ms.
   - [x] Updated `README.md` with Performance Architecture section.
 
+- [x] **Phase 19: Manual Schedule Trigger**
+  - [x] Implement `POST /api/<speaker_name>/schedules/<schedule_name>/trigger` endpoint.
+  - [x] Add "Run Now" button to the schedule action menu in the Web UI.
+  - [x] Update `README.md` and `task.md` to reflect the new feature.
+  - [x] Verify immediate execution of the "ON" routine via manual trigger.
+
 

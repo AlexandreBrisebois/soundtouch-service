@@ -14,7 +14,7 @@ def get_now_playing(ip):
         
         source = root.get('source')
         if source == "STANDBY":
-            return {"status": "STANDBY", "source": "STANDBY"}
+            return {"status": "Standby", "source": "STANDBY"}
             
         play_status_elem = root.find('playStatus')
         play_state = play_status_elem.text if play_status_elem is not None else "UNKNOWN"

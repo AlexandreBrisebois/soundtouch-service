@@ -1,35 +1,82 @@
-# SoundTouch Routine Manager
+<p align="center">
+  <img src="app/static/icon.png" width="128" alt="Wisp Logo">
+</p>
 
-Automate your Bose SoundTouch speakers. This app finds your speakers on the local network. It manages a simple schedule to control power, volume, and audio sources.
+# Wisp
 
-## Features
+> **A second life for your Bose SoundTouch home.**
 
-* **Phone-Friendly UI:** Manage your speakers from any phone or tablet in the house. No app to install, just a fast PWA.
-* **Pause / Resume:** Temporarily pause any schedule (sick day, ped day, vacation) without losing it. Resume when ready.
-* **Smart Time:** Plays music in the morning and stops it at night automatically.
-* **Polite System:** It checks if music is already playing first. It will never interrupt your own songs.
-* **NAS Ready:** Runs perfectly in a Docker container on port **9001**.
-* **Zero Config Discovery:** Automatically finds SoundTouch speakers on your local network.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Docker](https://img.shields.io/badge/docker-ready-cyan.svg)](https://www.docker.com/)
 
-## The Web UI
+**Home should be a sanctuary, not a source of stress.**
 
-Access the manager at `http://<your-ip>:9001` from your browser. 
+I built **Wisp** for my family because I believe technology should feel like magic. It should stay in the background and simply make life better. I wanted to replace harsh phone alarms with a gentle way to start the day.
 
-* **Hub:** See all speakers at a glance with live status and current volume % indicators.
-* **Detail:** Manage schedules, toggle power, and view active routines.
-* **PWA:** Select "Add to Home Screen" on iOS or Android to use it like a native app. The icon and theme color are already configured.
+When Bose released their API documentation, I saw a chance to give the SoundTouch system a second life. Wisp is the realization of a dream I had when I first purchased it many years ago: a home filled with music that follows the quiet rhythm of our lives, drifting gracefully from the first light of morning to the peace of the night.
 
-## The Schedule
+---
 
-The app reads it and does the work. You can select which days a routine should run. 
+## 📱 The Experience
 
-### Fade Transitions
-To ensure a gentle experience, the app supports volume fading:
-* **Fade-In (Wake Up):** Gradually steps up volume from 0 to your target. Default is **300 seconds** (5 minutes).
-* **Fade-Out (Sleep):** Gradually steps down volume to 0 before power off. Default is **60 seconds** (1 minute).
+*Wisp is built to be seen and then forgotten. Its simple layout handles the hard work so you can focus on the music.*
 
-> [!IMPORTANT]
-> All duration values (e.g., `fade_in_duration`) must be specified in **seconds**, not minutes.
+<table>
+  <tr>
+    <td width="33%" align="center">
+      <img src="docs/assets/hub_view.png" alt="Wisp Hub View"><br>
+      <b>The Hub</b><br>
+      <i>Real-time status for your speakers.</i>
+    </td>
+    <td width="33%" align="center">
+      <img src="docs/assets/detail_view.png" alt="Wisp Detail View"><br>
+      <b>Detail View</b><br>
+      <i>Manage schedules and precise routines.</i>
+    </td>
+    <td width="33%" align="center">
+      <img src="docs/assets/editor.png" alt="Wisp Editor View"><br>
+      <b>The Editor</b><br>
+      <i>Create gentle fade-in transitions.</i>
+    </td>
+  </tr>
+</table>
+
+---
+
+## ✨ Why Wisp?
+
+Most tools just "turn things on." Wisp is designed to be **polite, precise, and invisible.**
+
+*   🌅 **Sunrise Audio:** Wisp wakes you up slowly with custom fade-in transitions.
+*   🤫 **Polite Logic:** Wisp checks if you're already listening to music. It will never interrupt you.
+*   📱 **Instant Control:** A fast, mobile Web UI (PWA). Add it to your home screen for a native app feel.
+*   🚀 **Performance First:** Built with real-time updates and smart caching for a lag-free experience.
+*   🏠 **Privacy Centric:** 100% self-hosted. Your data never leaves your home network.
+
+---
+
+## 🚀 Quick Start (Docker)
+
+Get Wisp running in under 60 seconds.
+
+```bash
+docker run -d \
+  --name wisp \
+  --network host \
+  -v $(pwd)/config.json:/workspace/config.json \
+  -p 9001:9001 \
+  alexandrebrisebois/soundtouch-service:latest
+```
+
+*Access your hub at `http://<your-ip>:9001`*
+
+---
+
+## 🛠 Features for Power Users
+
+### 📅 Advanced Scheduling
+Manage routines across multiple speakers. Pick specific days, set volumes, and define unique fade times for every room.
 
 ```json
 {
@@ -40,7 +87,7 @@ To ensure a gentle experience, the app supports volume fading:
       "on_time": "06:15",
       "off_time": "07:30",
       "preset": 1,
-      "volume": 10,
+      "volume": 12,
       "fade_in_duration": 300,
       "fade_out_duration": 60,
       "paused": false
@@ -49,40 +96,37 @@ To ensure a gentle experience, the app supports volume fading:
 }
 ```
 
-## Performance Architecture
+### ⏸ Pause & Resume
+Life happens. Pause your routines for holidays or vacations with a single tap. Resume whenever you're ready.
 
-To ensure a snappy experience, the app uses a two-layer server-side cache:
+### ⚡ Run Now (Manual Trigger)
+Need to start a routine early? Trigger any schedule immediately from the UI or API.
 
-1. **Device IP Cache:** Eliminates 3-5 second mDNS discovery delays by caching speaker IPs in memory. Refreshes every 5 minutes in the background.
-2. **WebSocket Push:** Subscribes to real-time status updates from each speaker on port 8080 (`gabbo` protocol). The UI reads from an in-memory state store, allowing for **sub-100ms status responses** without polling the speakers directly.
+---
 
-Opening the Hub page now displays live status for all speakers almost instantly.
+## 🏗 Performance
 
-## The API
+Wisp is built to solve common local network audio delays:
 
-You do not have to edit the file by hand. The app provides a fast REST API. You can add, update, and delete schedules over your network. Data saves safely through a background queue. Your files will not corrupt.
+1.  **Device IP Cache:** Remembers your speakers to avoid discovery delays.
+2.  **WebSocket Sync:** Uses the Bose protocol for instant status updates.
+3.  **Safe Persistence:** Saves changes in the background to prevent file errors.
 
-Open your browser to `http://<your-ip>:9001/apidocs` to see the live API manual. You can test commands directly from this page.
+---
 
-### Pause & Resume
+Wisp provides a full REST API for advanced users and smart home integrations like Home Assistant. Explore the documentation at `http://<your-ip>:9001/apidocs`.
 
-Pause a schedule for a sick day, ped day, or vacation without losing the routine:
+**Key Endpoints:**
+*   `GET /api/speakers` — List all speakers and their live status.
+*   `POST /api/<speaker>/schedules/<name>/trigger` — Start a routine manually.
+*   `PATCH /api/<speaker>/schedules/<name>/pause` — Toggle holiday/sick-day mode.
 
-```
-PATCH /api/<speaker_name>/schedules/<schedule_name>/pause
-PATCH /api/<speaker_name>/schedules/<schedule_name>/resume
-```
+---
 
-Both return `202 Accepted`. The `paused` flag is saved to disk. The schedule remains in the config and resumes on the next matching day once you resume it.
+## 📦 Deployment Note
 
-## Deployment
+For best performance on a **Synology NAS**, run the container in **Host Network Mode**. This is required for your speakers to be found automatically.
 
-The app runs perfectly in a Synology NAS Docker environment. 
+---
 
-1. **Host Network:** Run the Docker container in "Host" network mode. This is required for mDNS discovery.
-2. **Mount Config:** Map `deployment/config.json` to `/workspace/config.json`. The app writes schedule changes here.
-3. **Port:** The manager serves the Web UI and API on port **9001** by default.
-
-## Documentation
-
-This tool uses the official Bose SoundTouch Web API.
+*Built with ❤️ for the Bose SoundTouch community.*

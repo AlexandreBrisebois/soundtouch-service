@@ -205,6 +205,49 @@ def api_resume_schedule(speaker_name, schedule_name):
     return jsonify({"message": f"Schedule '{schedule_name}' on '{speaker_name}' has been resumed."}), 202
 
 
+@api_bp.route("/api/<speaker_name>/schedules/<schedule_name>/trigger", methods=["POST"])
+def api_trigger_schedule(speaker_name, schedule_name):
+    """
+    Manually Trigger a Schedule
+    Immediately execute the 'ON' sequence for a specific schedule.
+    ---
+    parameters:
+      - in: path
+        name: speaker_name
+        type: string
+        required: true
+      - in: path
+        name: schedule_name
+        type: string
+        required: true
+    responses:
+      202:
+        description: Trigger request accepted.
+      404:
+        description: Schedule not found.
+    """
+    config = jobs.get_current_config()
+    schedules = config.get(speaker_name, [])
+    target = next((s for s in schedules if s.get("name") == schedule_name), None)
+    if target is None:
+        return jsonify({"error": f"Schedule '{schedule_name}' not found for speaker '{speaker_name}'"}), 404
+
+    import threading
+    threading.Thread(
+        target=jobs.auto_on_job,
+        args=(
+            speaker_name,
+            target.get("preset", 1),
+            target.get("volume", 20),
+            target.get("source"),
+            target.get("fade_in_duration", 300)
+        ),
+        daemon=True
+    ).start()
+
+    return jsonify({"message": f"Manually triggering schedule '{schedule_name}' on '{speaker_name}'"}), 202
+
+
 @api_bp.route("/api/discover", methods=["GET"])
 def api_discover():
     """

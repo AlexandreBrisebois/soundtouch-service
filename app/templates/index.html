@@ -3,17 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Your Speakers</title>
+  <title>Wisp</title>
 
   <!-- iOS PWA -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="Speakers">
+  <meta name="apple-mobile-web-app-title" content="Wisp">
   <link rel="apple-touch-icon" sizes="180x180" href="/app-static/icon.png">
 
   <!-- Android PWA -->
   <link rel="manifest" href="/app-static/manifest.json">
-  <meta name="theme-color" content="#6A9E8F">
+  <meta name="theme-color" content="#14B8A6">
 
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="/app-static/icon.png">
@@ -26,21 +26,21 @@
   <style>
     /* ─── Design Tokens ──────────────────────────────────────────── */
     :root {
-      --bg:          #EEF2EE;
+      --bg:          #F8FAFC;
       --surface:     #FFFFFF;
-      --surface-2:   #F5F8F5;
-      --primary:     #6A9E8F;
-      --primary-lt:  #C8DED9;
-      --primary-dk:  #4E7E70;
-      --paused:      #B8B8A8;
-      --paused-bg:   #F0F0EA;
-      --danger:      #B8756A;
-      --danger-lt:   #F0DDD9;
-      --dot-on:      #7EAD8A;
-      --dot-off:     #B0B8B4;
-      --text:        #2C3B35;
-      --text-muted:  #7A8C84;
-      --border:      #DDE5DE;
+      --surface-2:   #F1F5F9;
+      --primary:     #14B8A6;
+      --primary-lt:  #CCFBF1;
+      --primary-dk:  #0F766E;
+      --paused:      #94A3B8;
+      --paused-bg:   #F1F5F9;
+      --danger:      #EF4444;
+      --danger-lt:   #FEE2E2;
+      --dot-on:      #10B981;
+      --dot-off:     #CBD5E1;
+      --text:        #0F172A;
+      --text-muted:  #64748B;
+      --border:      #E2E8F0;
       --radius-sm:   10px;
       --radius:      16px;
       --radius-lg:   22px;
@@ -445,7 +445,7 @@
 <!-- Splash screen -->
 <div id="splash">
   <img src="/app-static/icon.png" alt="App icon">
-  <p>Your Speakers</p>
+  <p>Wisp</p>
 </div>
 
 <div id="app">
@@ -456,7 +456,7 @@
   <div id="view-hub" class="view">
     <div class="header">
       <div>
-        <div class="header-title">Your Speakers</div>
+        <div class="header-title">Wisp</div>
         <div class="header-sub" id="hub-greeting">Good afternoon</div>
       </div>
       <button class="icon-btn" id="btn-refresh" title="Refresh">
@@ -614,7 +614,7 @@
       </div>
 
       <!-- spacing before sticky save -->
-      <div style="height: 100px"></div>
+      <div style="height: 24px"></div>
     </div>
 
     <div class="thumb-bar">
@@ -631,6 +631,7 @@
   <div class="sheet">
     <div class="sheet-handle"></div>
     <div class="sheet-title" id="more-sheet-name"></div>
+    <button class="sheet-btn sheet-btn-confirm" id="sheet-btn-trigger">▶ Run Now</button>
     <button class="sheet-btn sheet-btn-danger" id="sheet-btn-delete">🗑 Delete Schedule</button>
     <button class="sheet-btn sheet-btn-cancel" id="sheet-btn-more-cancel">Cancel</button>
   </div>
@@ -938,6 +939,16 @@ function openMoreSheet(name) {
   document.getElementById('more-sheet-name').textContent = name;
   showOverlay('overlay-more');
 }
+
+document.getElementById('sheet-btn-trigger').addEventListener('click', async () => {
+  hideOverlay('overlay-more');
+  try {
+    toast('Triggering schedule...');
+    await fetch(`/api/${encodeURIComponent(currentSpeaker)}/schedules/${encodeURIComponent(moreTargetSchedule)}/trigger`, {method:'POST'});
+    // Refresh status after a short delay to see the power state change
+    setTimeout(() => fetchSpeakerStatus(currentSpeaker), 4000);
+  } catch { toast('Could not trigger schedule'); }
+});
 
 document.getElementById('sheet-btn-delete').addEventListener('click', () => {
   hideOverlay('overlay-more');

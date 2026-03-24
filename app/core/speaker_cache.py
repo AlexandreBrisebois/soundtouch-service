@@ -40,6 +40,10 @@ def _on_message(ws, message, speaker_name, ip):
                     # Reuse the parsing logic from status.py by passing the XML string
                     # But since status.py expects to make a request, let's just parse it here.
                     source = now_playing.get('source')
+                    if source == "STANDBY":
+                        update_cache(speaker_name, {"status": "Standby", "source": "STANDBY"})
+                        continue
+
                     play_status_elem = now_playing.find('playStatus')
                     play_state = play_status_elem.text if play_status_elem is not None else "UNKNOWN"
                     

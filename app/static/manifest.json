@@ -1,11 +1,11 @@
 {
-  "name": "Your Speakers",
-  "short_name": "Speakers",
-  "description": "Manage your Bose SoundTouch speaker schedules",
+  "name": "Wisp",
+  "short_name": "Wisp",
+  "description": "A second life for your SoundTouch home.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#EEF2EE",
-  "theme_color": "#6A9E8F",
+  "background_color": "#F8FAFC",
+  "theme_color": "#14B8A6",
   "icons": [
     {
       "src": "/app-static/icon.png",
@@ -15,3 +15,4 @@
     }
   ]
 }
+
