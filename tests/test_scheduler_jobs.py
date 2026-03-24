@@ -291,3 +291,56 @@ def test_sanitize_config_emits_structured_warning_fields(caplog):
     assert matching
     assert matching[0].event_fields["speaker"] == "Living Room"
     assert matching[0].event_fields["schedule"] == "Bad"
+
+
+def test_background_worker_pool_recreated_after_shutdown(monkeypatch):
+    """Verify that start_daemon() recreates the pool after shutdown_daemon() teardown."""
+    monkeypatch.setattr(jobs, "_config_worker_thread", None)
+    monkeypatch.setattr(jobs, "_scheduler_thread", None)
+    monkeypatch.setattr(jobs, "BACKGROUND_WORKER_POOL", None)
+
+    # Prevent real threads from starting
+    class FakeThread:
+        def __init__(self, *args, **kwargs):
+            pass
+        def start(self):
+            pass
+        def is_alive(self):
+            return False
+        def join(self, timeout=None):
+            pass
+
+    monkeypatch.setattr(jobs.threading, "Thread", FakeThread)
+
+    # start_daemon() should create the pool when it is None
+    jobs.start_daemon()
+    assert jobs.BACKGROUND_WORKER_POOL is not None
+    pool_first = jobs.BACKGROUND_WORKER_POOL
+
+    # shutdown_daemon() should shut down and reset the pool to None
+    jobs.shutdown_daemon(timeout=0.1)
+    assert jobs.BACKGROUND_WORKER_POOL is None
+
+    # start_daemon() should recreate the pool after shutdown
+    jobs.start_daemon()
+    assert jobs.BACKGROUND_WORKER_POOL is not None
+    assert jobs.BACKGROUND_WORKER_POOL is not pool_first
+
+    # Cleanup
+    jobs.shutdown_daemon(timeout=0.1)
+
+
+def test_submit_background_task_drops_task_when_pool_is_none(monkeypatch, caplog):
+    """Verify submit_background_task() logs a warning and returns when pool is None."""
+    monkeypatch.setattr(jobs, "BACKGROUND_WORKER_POOL", None)
+
+    called = []
+
+    with caplog.at_level(logging.WARNING, logger="app.scheduler.jobs"):
+        jobs.submit_background_task(lambda: called.append(True))
+
+    assert not called
+    assert any(
+        rec.levelname == "WARNING" and "task dropped" in rec.message
+        for rec in caplog.records
+    )

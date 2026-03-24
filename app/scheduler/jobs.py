@@ -26,7 +26,7 @@ CONFIG_SCHEMA_VERSION = 1
 config_queue: queue.Queue[ConfigMutation | None] = queue.Queue()
 VALID_DAYS = {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
 TIME_PATTERN = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
-BACKGROUND_WORKER_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="jobs-bg")
+BACKGROUND_WORKER_POOL: ThreadPoolExecutor | None = None
 
 SpeakerSchedules = dict[str, list[Schedule]]
 
@@ -465,6 +465,9 @@ def _log_future_exception(future: Any) -> None:
 
 def submit_background_task(func: Any, *args: Any, **kwargs: Any) -> None:
     """Submit a background task onto the bounded worker pool."""
+    if BACKGROUND_WORKER_POOL is None:
+        logger.warning("Background worker pool is not running; task dropped.")
+        return
     future = BACKGROUND_WORKER_POOL.submit(func, *args, **kwargs)
     future.add_done_callback(_log_future_exception)
 
@@ -522,11 +525,14 @@ def run_scheduler_loop() -> None:
         _stop_event.wait(SCHEDULER_LOOP_INTERVAL_SECONDS)
 
 def start_daemon() -> None:
-    global _config_worker_thread, _scheduler_thread
+    global _config_worker_thread, _scheduler_thread, BACKGROUND_WORKER_POOL
 
     with _daemon_lock:
         if _config_worker_thread and _config_worker_thread.is_alive() and _scheduler_thread and _scheduler_thread.is_alive():
             return
+
+        if BACKGROUND_WORKER_POOL is None:
+            BACKGROUND_WORKER_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="jobs-bg")
 
         _stop_event.clear()
 
@@ -540,7 +546,7 @@ def start_daemon() -> None:
 
 
 def shutdown_daemon(timeout: float = 3.0) -> None:
-    global _config_worker_thread, _scheduler_thread
+    global _config_worker_thread, _scheduler_thread, BACKGROUND_WORKER_POOL
 
     with _daemon_lock:
         _stop_event.set()
@@ -554,7 +560,9 @@ def shutdown_daemon(timeout: float = 3.0) -> None:
             _scheduler_thread.join(timeout=timeout)
             _scheduler_thread = None
 
-    BACKGROUND_WORKER_POOL.shutdown(wait=False, cancel_futures=True)
+    if BACKGROUND_WORKER_POOL is not None:
+        BACKGROUND_WORKER_POOL.shutdown(wait=False, cancel_futures=True)
+        BACKGROUND_WORKER_POOL = None
 
 def get_current_config() -> SpeakerSchedules:
     global current_config
