@@ -76,7 +76,11 @@ if __name__ == "__main__":
         req = requests.get(f"{base_url}/api/schedules", timeout=2)
         print(f"GET {base_url}/api/schedules :")
         print(req.json())
-        
+
+        print(f"\nGET {base_url}/api/{target}/status - Checking live status and volume...")
+        res = requests.get(f"{base_url}/api/{target}/status", timeout=5)
+        print(res.json())
+
         print(f"\nPOST {base_url}/api/{target}/schedules - Adding 'Test Routine'...")
         res = requests.post(f"{base_url}/api/{target}/schedules", json={
             "name": "Test Routine",

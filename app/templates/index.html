@@ -791,7 +791,8 @@ async function fetchSpeakerStatus(speakerName) {
       if (playing && data.source && data.source !== 'STANDBY') {
         display = `${statusTxt} · ${data.source}`;
       }
-      label.textContent = display;
+      const volTag = (data.volume != null) ? ` · ${data.volume}%` : '';
+      label.textContent = display + volTag;
     }
     if (card)  { card.classList.toggle('playing', playing); }
     

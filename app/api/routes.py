@@ -240,7 +240,8 @@ def api_status(speaker_name):
     for d in devices:
         if d['name'] == speaker_name:
             status_data = status.get_now_playing(d['ip'])
-            return jsonify({"speaker": speaker_name, "ip": d['ip'], **status_data})
+            volume      = status.get_volume(d['ip'])
+            return jsonify({"speaker": speaker_name, "ip": d['ip'], "volume": volume, **status_data})
     return jsonify({"error": "Speaker not found"}), 404
 
 @api_bp.route("/api/<speaker_name>/power", methods=["POST"])

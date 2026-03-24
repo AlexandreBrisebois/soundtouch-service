@@ -15,7 +15,7 @@ Automate your Bose SoundTouch speakers. This app finds your speakers on the loca
 
 Access the manager at `http://<your-ip>:9001` from your browser. 
 
-* **Hub:** See all speakers at a glance with live status indicators.
+* **Hub:** See all speakers at a glance with live status and current volume % indicators.
 * **Detail:** Manage schedules, toggle power, and view active routines.
 * **PWA:** Select "Add to Home Screen" on iOS or Android to use it like a native app. The icon and theme color are already configured.
 
