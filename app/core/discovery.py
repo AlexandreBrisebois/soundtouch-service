@@ -37,7 +37,7 @@ def discover_systems(timeout: float = DISCOVERY_SCAN_TIMEOUT_SECONDS) -> list[di
     """
     zeroconf = Zeroconf()
     listener = SoundTouchListener()
-    ServiceBrowser(zeroconf, "_soundtouch._tcp.local.", cast(Any, listener))
+    _browser = ServiceBrowser(zeroconf, "_soundtouch._tcp.local.", cast(Any, listener))
     time.sleep(timeout)
     zeroconf.close()
     return listener.devices
