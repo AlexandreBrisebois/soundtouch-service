@@ -1,4 +1,5 @@
 from flask import Flask
+import logging
 
 from app.api.routes import api_bp
 
@@ -180,3 +181,54 @@ def test_volume_endpoint_rejects_malformed_json(monkeypatch):
 
     assert response.status_code == 400
     assert response.get_json() == {"error": "Malformed JSON body."}
+
+
+def test_add_schedule_logs_structured_event_fields(monkeypatch, caplog):
+    app = create_test_app()
+    client = app.test_client()
+    queued = []
+
+    monkeypatch.setattr("app.api.routes.jobs.config_queue.put", queued.append)
+
+    with caplog.at_level(logging.INFO, logger="app.api.routes"):
+        response = client.post(
+            "/api/Living Room/schedules",
+            json={
+                "name": "Morning",
+                "days": ["monday"],
+                "on_time": "06:15",
+                "off_time": "07:00",
+                "preset": 1,
+                "volume": 10,
+            },
+        )
+
+    assert response.status_code == 202
+    matching = [
+        rec for rec in caplog.records
+        if rec.msg == "Schedule queued for processing."
+    ]
+    assert matching
+    assert matching[0].event_fields["speaker"] == "Living Room"
+    assert matching[0].event_fields["schedule"] == "Morning"
+    assert matching[0].event_fields["action"] == "add_update"
+
+
+def test_delete_schedule_logs_structured_event_fields(monkeypatch, caplog):
+    app = create_test_app()
+    client = app.test_client()
+    queued = []
+
+    monkeypatch.setattr("app.api.routes.jobs.config_queue.put", queued.append)
+
+    with caplog.at_level(logging.INFO, logger="app.api.routes"):
+        response = client.delete("/api/Living Room/schedules/Weekend")
+
+    assert response.status_code == 202
+    matching = [
+        rec for rec in caplog.records
+        if rec.msg == "Schedule delete queued."
+    ]
+    assert matching
+    assert matching[0].event_fields["speaker"] == "Living Room"
+    assert matching[0].event_fields["schedule"] == "Weekend"

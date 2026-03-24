@@ -1,5 +1,6 @@
 from app.scheduler import jobs
 import json
+import logging
 
 
 def test_auto_on_job_force_from_standby_applies_preset_then_fade(monkeypatch):
@@ -265,3 +266,28 @@ def test_load_config_reads_versioned_document(tmp_path, monkeypatch):
             }
         ]
     }
+
+
+def test_sanitize_config_emits_structured_warning_fields(caplog):
+    bad_config = {
+        "Living Room": [
+            {
+                "name": "Bad",
+                "days": ["notaday"],
+                "on_time": "06:15",
+                "off_time": "07:00",
+            }
+        ]
+    }
+
+    with caplog.at_level(logging.WARNING, logger="app.scheduler.jobs"):
+        result = jobs.sanitize_config(bad_config)
+
+    assert result == {}
+    matching = [
+        rec for rec in caplog.records
+        if rec.msg == "Skipping schedule: no valid day names."
+    ]
+    assert matching
+    assert matching[0].event_fields["speaker"] == "Living Room"
+    assert matching[0].event_fields["schedule"] == "Bad"

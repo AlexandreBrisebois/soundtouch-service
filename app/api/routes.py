@@ -1,5 +1,6 @@
 import re
-from typing import Any
+import logging
+from typing import Any, Mapping
 from flask import Blueprint, jsonify, request, render_template, current_app, send_from_directory, make_response
 from app.core.constants import (
   DEFAULT_FADE_IN_DURATION_SECONDS,
@@ -8,6 +9,7 @@ from app.core.constants import (
   DEFAULT_VOLUME,
 )
 from app.core import discovery, status, control, speaker_cache
+from app.core.models import ConfigMutation, Schedule, SchedulePayload
 from app.scheduler import jobs
 
 api_bp = Blueprint('api', __name__)
@@ -15,6 +17,26 @@ VALID_DAYS = {
   "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"
 }
 TIME_PATTERN = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+logger = logging.getLogger(__name__)
+
+
+def _log_with_fields(level: int, message: str, **fields: Any) -> None:
+  logger.log(level, message, extra={"event_fields": fields})
+
+
+def _to_schedule(payload: Mapping[str, Any]) -> Schedule:
+  return {
+    "name": str(payload["name"]),
+    "days": payload.get("days"),
+    "on_time": payload.get("on_time"),
+    "off_time": payload.get("off_time"),
+    "preset": payload.get("preset"),
+    "source": payload.get("source"),
+    "volume": int(payload.get("volume", DEFAULT_VOLUME)),
+    "fade_in_duration": float(payload.get("fade_in_duration", DEFAULT_FADE_IN_DURATION_SECONDS)),
+    "fade_out_duration": float(payload.get("fade_out_duration", DEFAULT_FADE_OUT_DURATION_SECONDS)),
+    "paused": bool(payload.get("paused", False)),
+  }
 
 
 def _coerce_int(value: Any, field_name: str, errors: dict[str, str], minimum: int | None = None, maximum: int | None = None) -> int | None:
@@ -55,12 +77,12 @@ def _coerce_non_negative_number(value: Any, field_name: str, errors: dict[str, s
   return coerced
 
 
-def _validate_schedule_payload(data: Any) -> tuple[dict[str, Any] | None, dict[str, str] | None]:
+def _validate_schedule_payload(data: Any) -> tuple[SchedulePayload | None, dict[str, str] | None]:
   if not isinstance(data, dict):
     return None, {"body": "Expected a JSON object."}
 
-  errors = {}
-  normalized = {}
+  errors: dict[str, str] = {}
+  normalized: SchedulePayload = {}
 
   name = data.get("name")
   if not isinstance(name, str) or not name.strip():
@@ -156,6 +178,8 @@ def ui_root() -> tuple[Any, int, dict[str, str]]:
 
 @api_bp.route("/sw.js")
 def serve_sw() -> Any:
+    if current_app.static_folder is None:
+      return jsonify({"error": "Static assets not configured."}), 404
     return send_from_directory(current_app.static_folder, "sw.js")
 
 @api_bp.route("/api/info", methods=["GET"])
@@ -231,14 +255,24 @@ def api_add_schedule(speaker_name: str) -> tuple[Any, int]:
     normalized, errors = _validate_schedule_payload(data)
     if errors:
       return jsonify({"errors": errors}), 400
+
+    assert normalized is not None
         
-    jobs.config_queue.put({
-        "action": "add_update",
-        "speaker": speaker_name,
-      "schedule_name": normalized["name"],
-      "previous_name": normalized.pop("previous_name", None),
-      "data": normalized
-    })
+    jobs.config_queue.put(ConfigMutation(
+        action="add_update",
+        speaker=speaker_name,
+        schedule_name=normalized["name"],
+        previous_name=normalized.get("previous_name"),
+        data=_to_schedule(normalized),
+    ))
+
+    _log_with_fields(
+      logging.INFO,
+      "Schedule queued for processing.",
+      speaker=speaker_name,
+      schedule=normalized["name"],
+      action="add_update",
+    )
     
     return jsonify({"message": f"Schedule '{normalized['name']}' queued for processing on '{speaker_name}'"}), 202
 
@@ -263,11 +297,14 @@ def api_delete_schedule(speaker_name: str, schedule_name: str) -> tuple[Any, int
       202:
         description: Deletion request is accepted and queued for IO processing.
     """
-    jobs.config_queue.put({
-        "action": "delete",
-        "speaker": speaker_name,
-        "schedule_name": schedule_name
-    })
+    jobs.config_queue.put(ConfigMutation(
+        action="delete",
+        speaker=speaker_name,
+        schedule_name=schedule_name,
+        previous_name=None,
+    ))
+
+    _log_with_fields(logging.INFO, "Schedule delete queued.", speaker=speaker_name, schedule=schedule_name)
     
     return jsonify({"message": f"Delete request for schedule '{schedule_name}' queued for processing on '{speaker_name}'"}), 202
 
@@ -301,14 +338,16 @@ def api_pause_schedule(speaker_name: str, schedule_name: str) -> tuple[Any, int]
     if target is None:
         return jsonify({"error": f"Schedule '{schedule_name}' not found for speaker '{speaker_name}'"}), 404
 
-    updated = dict(target)
+    updated = _to_schedule(dict(target))
     updated["paused"] = True
-    jobs.config_queue.put({
-        "action": "add_update",
-        "speaker": speaker_name,
-        "schedule_name": schedule_name,
-        "data": updated
-    })
+    jobs.config_queue.put(ConfigMutation(
+      action="add_update",
+      speaker=speaker_name,
+      schedule_name=schedule_name,
+      previous_name=None,
+      data=updated,
+    ))
+    _log_with_fields(logging.INFO, "Schedule pause queued.", speaker=speaker_name, schedule=schedule_name)
     return jsonify({"message": f"Schedule '{schedule_name}' on '{speaker_name}' is now paused."}), 202
 
 
@@ -341,14 +380,16 @@ def api_resume_schedule(speaker_name: str, schedule_name: str) -> tuple[Any, int
     if target is None:
         return jsonify({"error": f"Schedule '{schedule_name}' not found for speaker '{speaker_name}'"}), 404
 
-    updated = dict(target)
+    updated = _to_schedule(dict(target))
     updated["paused"] = False
-    jobs.config_queue.put({
-        "action": "add_update",
-        "speaker": speaker_name,
-        "schedule_name": schedule_name,
-        "data": updated
-    })
+    jobs.config_queue.put(ConfigMutation(
+      action="add_update",
+      speaker=speaker_name,
+      schedule_name=schedule_name,
+      previous_name=None,
+      data=updated,
+    ))
+    _log_with_fields(logging.INFO, "Schedule resume queued.", speaker=speaker_name, schedule=schedule_name)
     return jsonify({"message": f"Schedule '{schedule_name}' on '{speaker_name}' has been resumed."}), 202
 
 
@@ -388,6 +429,7 @@ def api_trigger_schedule(speaker_name: str, schedule_name: str) -> tuple[Any, in
       target.get("fade_in_duration", DEFAULT_FADE_IN_DURATION_SECONDS),
       True,
     )
+    _log_with_fields(logging.INFO, "Manual trigger queued.", speaker=speaker_name, schedule=schedule_name)
 
     return jsonify({"message": f"Manually triggering schedule '{schedule_name}' on '{speaker_name}'"}), 202
 

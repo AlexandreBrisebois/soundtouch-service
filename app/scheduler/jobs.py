@@ -19,15 +19,15 @@ from app.core.constants import (
     SPEAKER_BOOT_DELAY_SECONDS,
 )
 from app.core import discovery, status, control
+from app.core.models import ConfigDocument, ConfigMutation, Schedule
 
 CONFIG_FILE_PATH = Path(os.getenv("CONFIG_FILE", "config.json"))
 CONFIG_SCHEMA_VERSION = 1
-config_queue: queue.Queue[dict[str, Any] | None] = queue.Queue()
+config_queue: queue.Queue[ConfigMutation | None] = queue.Queue()
 VALID_DAYS = {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
 TIME_PATTERN = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 BACKGROUND_WORKER_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="jobs-bg")
 
-Schedule = dict[str, Any]
 SpeakerSchedules = dict[str, list[Schedule]]
 
 # In-memory config accessed by scheduler and API GETs
@@ -38,6 +38,16 @@ _daemon_lock = threading.Lock()
 _config_worker_thread: threading.Thread | None = None
 _scheduler_thread: threading.Thread | None = None
 
+
+def _log_with_fields(level: int, message: str, **fields: Any) -> None:
+    logger.log(level, message, extra={"event_fields": fields})
+
+
+def _normalize_status(value: Any) -> str:
+    if isinstance(value, str) and value:
+        return value
+    return "OFFLINE"
+
 def get_default_config() -> SpeakerSchedules:
     return {
         "Target Speaker 1": [
@@ -47,6 +57,7 @@ def get_default_config() -> SpeakerSchedules:
                 "on_time": "06:15",
                 "off_time": "07:30",
                 "preset": DEFAULT_PRESET,
+                "source": None,
                 "volume": 10,
                 "fade_in_duration": DEFAULT_FADE_IN_DURATION_SECONDS,
                 "fade_out_duration": DEFAULT_FADE_OUT_DURATION_SECONDS,
@@ -88,25 +99,45 @@ def _normalize_time(value: Any) -> str | None:
 
 def _normalize_schedule(schedule: Any, speaker_name: str, index: int) -> Schedule | None:
     if not isinstance(schedule, dict):
-        logger.warning("Skipping invalid schedule #%s for '%s': expected an object.", index + 1, speaker_name)
+        _log_with_fields(
+            logging.WARNING,
+            "Skipping invalid schedule: expected an object.",
+            speaker=speaker_name,
+            index=index + 1,
+        )
         return None
 
     name = schedule.get("name")
     if not isinstance(name, str) or not name.strip():
-        logger.warning("Skipping schedule #%s for '%s': missing valid name.", index + 1, speaker_name)
+        _log_with_fields(
+            logging.WARNING,
+            "Skipping schedule: missing valid name.",
+            speaker=speaker_name,
+            index=index + 1,
+        )
         return None
 
     on_time = _normalize_time(schedule.get("on_time"))
     off_time = _normalize_time(schedule.get("off_time"))
     if on_time is None and off_time is None:
-        logger.warning("Skipping schedule '%s' for '%s': no valid on/off time.", name, speaker_name)
+        _log_with_fields(
+            logging.WARNING,
+            "Skipping schedule: no valid on/off time.",
+            speaker=speaker_name,
+            schedule=name,
+        )
         return None
 
     days = schedule.get("days")
     normalized_days = None
     if days is not None:
         if not isinstance(days, list):
-            logger.warning("Skipping schedule '%s' for '%s': days must be a list.", name, speaker_name)
+            _log_with_fields(
+                logging.WARNING,
+                "Skipping schedule: days must be a list.",
+                speaker=speaker_name,
+                schedule=name,
+            )
             return None
         normalized_days = []
         for day in days:
@@ -116,7 +147,12 @@ def _normalize_schedule(schedule: Any, speaker_name: str, index: int) -> Schedul
             if normalized_day in VALID_DAYS and normalized_day not in normalized_days:
                 normalized_days.append(normalized_day)
         if not normalized_days:
-            logger.warning("Skipping schedule '%s' for '%s': no valid day names.", name, speaker_name)
+            _log_with_fields(
+                logging.WARNING,
+                "Skipping schedule: no valid day names.",
+                speaker=speaker_name,
+                schedule=name,
+            )
             return None
 
     source = schedule.get("source")
@@ -135,8 +171,14 @@ def _normalize_schedule(schedule: Any, speaker_name: str, index: int) -> Schedul
         "preset": preset,
         "source": normalized_source,
         "volume": _coerce_int(schedule.get("volume", DEFAULT_VOLUME), DEFAULT_VOLUME, minimum=0, maximum=100),
-        "fade_in_duration": _coerce_non_negative_float(schedule.get("fade_in_duration", DEFAULT_FADE_IN_DURATION_SECONDS), DEFAULT_FADE_IN_DURATION_SECONDS),
-        "fade_out_duration": _coerce_non_negative_float(schedule.get("fade_out_duration", DEFAULT_FADE_OUT_DURATION_SECONDS), DEFAULT_FADE_OUT_DURATION_SECONDS),
+        "fade_in_duration": _coerce_non_negative_float(
+            schedule.get("fade_in_duration", DEFAULT_FADE_IN_DURATION_SECONDS),
+            DEFAULT_FADE_IN_DURATION_SECONDS,
+        ),
+        "fade_out_duration": _coerce_non_negative_float(
+            schedule.get("fade_out_duration", DEFAULT_FADE_OUT_DURATION_SECONDS),
+            DEFAULT_FADE_OUT_DURATION_SECONDS,
+        ),
         "paused": bool(schedule.get("paused", False)),
     }
 
@@ -145,16 +187,20 @@ def sanitize_config(config: Any) -> SpeakerSchedules | None:
     if config is None:
         return None
     if not isinstance(config, dict):
-        logger.warning("Config root must be an object. Falling back to an empty configuration.")
+        _log_with_fields(logging.WARNING, "Config root must be an object.")
         return {}
 
     sanitized = {}
     for speaker_name, schedules in config.items():
         if not isinstance(speaker_name, str) or not speaker_name.strip():
-            logger.warning("Skipping config entry with invalid speaker name.")
+            _log_with_fields(logging.WARNING, "Skipping config entry with invalid speaker name.")
             continue
         if not isinstance(schedules, list):
-            logger.warning("Skipping speaker '%s': schedules must be a list.", speaker_name)
+            _log_with_fields(
+                logging.WARNING,
+                "Skipping speaker config: schedules must be a list.",
+                speaker=speaker_name,
+            )
             continue
 
         normalized_schedules = []
@@ -169,7 +215,7 @@ def sanitize_config(config: Any) -> SpeakerSchedules | None:
     return sanitized
 
 
-def _build_config_document(config: SpeakerSchedules) -> dict[str, Any]:
+def _build_config_document(config: SpeakerSchedules) -> ConfigDocument:
     return {
         "version": CONFIG_SCHEMA_VERSION,
         "schedules": config,
@@ -235,16 +281,16 @@ def config_io_worker() -> None:
                 break
             
             # Action: 'add_update', 'delete'
-            action = mutation.get("action")
-            speaker = mutation.get("speaker")
-            schedule_name = mutation.get("schedule_name")
+            action = mutation["action"]
+            speaker = mutation["speaker"]
+            schedule_name = mutation["schedule_name"]
             previous_name = mutation.get("previous_name")
             data = mutation.get("data")
             
             # Read latest from disk
             config = load_config()
             if config is None:
-                logger.warning("Skipping config mutation because the config file could not be loaded.")
+                _log_with_fields(logging.WARNING, "Skipping config mutation: config could not be loaded.")
                 continue
             
             if speaker not in config:
@@ -253,6 +299,14 @@ def config_io_worker() -> None:
             schedules = config[speaker]
             
             if action == 'add_update':
+                if data is None:
+                    _log_with_fields(
+                        logging.WARNING,
+                        "Skipping add_update mutation: missing schedule data.",
+                        speaker=speaker,
+                        schedule=schedule_name,
+                    )
+                    continue
                 # Remove existing with same name if it exists, then append
                 names_to_replace = {schedule_name}
                 if previous_name:
@@ -280,7 +334,13 @@ def config_io_worker() -> None:
             # -----------------------------------------------------------------
             _write_config(config)
             
-            logger.info("Applied config mutation '%s' for speaker '%s' schedule '%s'.", action, speaker, schedule_name)
+            _log_with_fields(
+                logging.INFO,
+                "Applied config mutation.",
+                action=action,
+                speaker=speaker,
+                schedule=schedule_name,
+            )
             
             # Update in-memory config
             global current_config
@@ -299,7 +359,7 @@ def auto_on_job(speaker_name: str, preset: int | None, volume: int, source: str 
         return
 
     status_data = status.get_now_playing(target_ip)
-    speaker_status = status_data.get("status", "OFFLINE")
+    speaker_status = _normalize_status(status_data.get("status"))
     logger.info("Speaker '%s' current status is '%s'.", speaker_name, speaker_status)
     
     is_active = speaker_status.upper() not in ["STANDBY", "OFFLINE"]
@@ -345,7 +405,7 @@ def auto_on_job(speaker_name: str, preset: int | None, volume: int, source: str 
 
         if v % FADE_STATUS_RECHECK_STEP_INTERVAL == 0 or sleep_interval > FADE_STATUS_RECHECK_STEP_INTERVAL:
             status_data = status.get_now_playing(target_ip)
-            if status_data.get("status", "").upper() == "STANDBY":
+            if _normalize_status(status_data.get("status")).upper() == "STANDBY":
                 logger.info("Fade-in aborted for '%s': speaker was manually turned off mid-fade.", speaker_name)
                 return
 
@@ -362,7 +422,7 @@ def auto_off_job(speaker_name: str, fade_out_duration: float = DEFAULT_FADE_OUT_
         return
 
     status_data = status.get_now_playing(target_ip)
-    speaker_status = status_data.get("status", "OFFLINE")
+    speaker_status = _normalize_status(status_data.get("status"))
     logger.info("Speaker '%s' current status is '%s'.", speaker_name, speaker_status)
 
     fade_out_duration = _coerce_non_negative_float(fade_out_duration, DEFAULT_FADE_OUT_DURATION_SECONDS)
@@ -384,7 +444,7 @@ def auto_off_job(speaker_name: str, fade_out_duration: float = DEFAULT_FADE_OUT_
                 
                 if v % FADE_STATUS_RECHECK_STEP_INTERVAL == 0 or sleep_interval > FADE_STATUS_RECHECK_STEP_INTERVAL:
                     status_data = status.get_now_playing(target_ip)
-                    if status_data.get("status", "").upper() == "STANDBY":
+                    if _normalize_status(status_data.get("status")).upper() == "STANDBY":
                         logger.info("Fade-out aborted for '%s': speaker was already turned off.", speaker_name)
                         return
                         

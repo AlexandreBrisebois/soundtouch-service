@@ -2,7 +2,7 @@ import logging
 import time
 import socket
 import threading
-from typing import Callable
+from typing import Any, Callable, cast
 from zeroconf import ServiceBrowser, Zeroconf
 from app.core.constants import (
     DISCOVERY_REFRESH_INTERVAL_SECONDS,
@@ -37,7 +37,7 @@ def discover_systems(timeout: float = DISCOVERY_SCAN_TIMEOUT_SECONDS) -> list[di
     """
     zeroconf = Zeroconf()
     listener = SoundTouchListener()
-    ServiceBrowser(zeroconf, "_soundtouch._tcp.local.", listener)
+    ServiceBrowser(zeroconf, "_soundtouch._tcp.local.", cast(Any, listener))
     time.sleep(timeout)
     zeroconf.close()
     return listener.devices

@@ -168,6 +168,34 @@ pre-commit run --all-files
 
 Tooling configuration lives in `pyproject.toml` and CI runs the same checks from `.github/workflows/tests.yml`.
 
+## 📄 Config Schema Migration
+
+The scheduler configuration file now uses a versioned document format:
+
+```json
+{
+  "version": 1,
+  "schedules": {
+    "Living Room": [
+      {
+        "name": "Morning Routine",
+        "days": ["monday"],
+        "on_time": "06:15",
+        "off_time": "07:30",
+        "preset": 1,
+        "source": null,
+        "volume": 10,
+        "fade_in_duration": 300,
+        "fade_out_duration": 60,
+        "paused": false
+      }
+    ]
+  }
+}
+```
+
+Legacy root-level schedule maps are auto-migrated on load. Keep a backup of `config.json` before upgrading in production.
+
 ---
 
 *Built with ❤️ for the Bose SoundTouch community.*

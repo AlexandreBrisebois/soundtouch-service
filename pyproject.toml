@@ -18,8 +18,11 @@ select = [
 python_version = "3.14"
 ignore_missing_imports = true
 disable_error_code = ["import-untyped"]
+follow_imports = "skip"
 files = [
   "app/core/http_client.py",
   "app/core/control.py",
   "app/core/status.py",
+  "app/core/discovery.py",
+  "app/scheduler/jobs.py",
 ]
