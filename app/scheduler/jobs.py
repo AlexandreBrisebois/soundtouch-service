@@ -456,9 +456,17 @@ def auto_off_job(speaker_name: str, fade_out_duration: float = DEFAULT_FADE_OUT_
         logger.info("Speaker '%s' is already in standby/offline mode. No action needed.", speaker_name)
 
 
+def _log_future_exception(future: Any) -> None:
+    """Log any exception raised by a background task Future."""
+    exc = future.exception()
+    if exc is not None:
+        logger.error("Background task raised an unhandled exception.", exc_info=exc)
+
+
 def submit_background_task(func: Any, *args: Any, **kwargs: Any) -> None:
     """Submit a background task onto the bounded worker pool."""
-    BACKGROUND_WORKER_POOL.submit(func, *args, **kwargs)
+    future = BACKGROUND_WORKER_POOL.submit(func, *args, **kwargs)
+    future.add_done_callback(_log_future_exception)
 
 
 def run_scheduler_loop() -> None:
