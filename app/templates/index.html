@@ -13,7 +13,7 @@
 
   <!-- Android PWA -->
   <link rel="manifest" href="/app-static/manifest.json">
-  <meta name="theme-color" content="#14B8A6">
+  <meta name="theme-color" content="#57534E">
 
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="/app-static/icon.png">
@@ -26,21 +26,21 @@
   <style>
     /* ─── Design Tokens ──────────────────────────────────────────── */
     :root {
-      --bg:          #F8FAFC;
-      --surface:     #FFFFFF;
-      --surface-2:   #F1F5F9;
-      --primary:     #14B8A6;
-      --primary-lt:  #CCFBF1;
-      --primary-dk:  #0F766E;
+      --bg:          #FAF7F2;
+      --surface:     #FCFBFA;
+      --surface-2:   #F5F5F4;
+      --primary:     #57534E;
+      --primary-lt:  #E7E5E4;
+      --primary-dk:  #292524;
       --paused:      #94A3B8;
       --paused-bg:   #F1F5F9;
       --danger:      #EF4444;
       --danger-lt:   #FEE2E2;
       --dot-on:      #10B981;
-      --dot-off:     #CBD5E1;
-      --text:        #0F172A;
-      --text-muted:  #64748B;
-      --border:      #E2E8F0;
+      --dot-off:     #D6D3D1;
+      --text:        #1C1917;
+      --text-muted:  #78716C;
+      --border:      #E7E5E4;
       --radius-sm:   10px;
       --radius:      16px;
       --radius-lg:   22px;
@@ -407,12 +407,12 @@
     /* ─── Splash ─────────────────────────────────────────────────── */
     #splash {
       position: fixed; inset: 0; z-index: 999;
-      background: linear-gradient(160deg, #A8C5B5 0%, #7BA7BC 100%);
+      background: #FAF7F2;
       display: flex; align-items: center; justify-content: center;
       flex-direction: column; transition: opacity .6s ease;
     }
     #splash img { width: 110px; height: 110px; border-radius: 26px; box-shadow: var(--shadow-lg); }
-    #splash p { color: #fff; font-size: 14px; font-weight: 500; margin-top: 18px; opacity: .8; letter-spacing: 0.3px; }
+    #splash p { color: var(--text); font-size: 14px; font-weight: 500; margin-top: 18px; opacity: .8; letter-spacing: 0.3px; }
     #splash.hidden { opacity: 0; pointer-events: none; }
 
     /* ─── Spinner ────────────────────────────────────────────────── */

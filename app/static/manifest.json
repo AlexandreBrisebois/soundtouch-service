@@ -4,8 +4,8 @@
   "description": "A second life for your SoundTouch home.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#F8FAFC",
-  "theme_color": "#14B8A6",
+  "background_color": "#FAF7F2",
+  "theme_color": "#57534E",
   "icons": [
     {
       "src": "/app-static/icon.png",
