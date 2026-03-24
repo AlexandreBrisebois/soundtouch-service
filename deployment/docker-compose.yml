@@ -12,7 +12,7 @@ services:
 
     environment:
       # API Port configuration
-      - PORT=5000
+      - PORT=9001
 
       # VERY IMPORTANT: Set your exact time zone so the Python scheduler 
       # triggers your config.json "HH:MM" at the correct local time instead of UTC.

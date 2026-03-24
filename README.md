@@ -7,7 +7,7 @@
 > **A second life for your Bose SoundTouch home.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![Docker](https://img.shields.io/badge/docker-ready-cyan.svg)](https://www.docker.com/)
 
 **Home should be a sanctuary, not a source of stress.**
@@ -65,15 +65,17 @@ Most tools just "turn things on." Wisp is designed to be **polite, precise, and 
 
 ## 🚀 Quick Start (Docker)
 
-Get Wisp running in under 60 seconds.
+Get Wisp running quickly.
 
 ```bash
+cp deployment/config.json ./config.json
+
 docker run -d \
   --name wisp \
   --network host \
   -v $(pwd)/config.json:/workspace/config.json \
   -p 9001:9001 \
-  alexandrebrisebois/soundtouch-service:latest
+  brisebois/soundtouch-service:latest
 ```
 
 *Access your hub at `http://<your-ip>:9001`*
@@ -136,6 +138,23 @@ The real-time speaker status view also depends on access to the speaker WebSocke
 ## 📦 Deployment Note
 
 For best performance on a **Synology NAS**, run the container in **Host Network Mode**. This is required for your speakers to be found automatically.
+
+---
+
+## 🧪 Tested Environments
+
+- Docker with host networking on local LAN.
+- Python 3.9+ runtime (container and local development).
+- Synology NAS deployment using `deployment/docker-compose.yml`.
+
+---
+
+## ✅ Project Health
+
+- [Contributing Guide](CONTRIBUTING.md)
+- [Security Policy](SECURITY.md)
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+- [Changelog](CHANGELOG.md)
 
 ---
 
