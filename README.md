@@ -94,7 +94,8 @@ Manage routines across multiple speakers. Pick specific days, set volumes, and d
       "on_time": "06:15",
       "off_time": "07:30",
       "preset": 1,
-      "volume": 12,
+      "source": null,
+      "volume": 10,
       "fade_in_duration": 300,
       "fade_out_duration": 60,
       "paused": false
