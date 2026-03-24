@@ -7,7 +7,7 @@
 > **A second life for your Bose SoundTouch home.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.14+](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/downloads/)
 [![Docker](https://img.shields.io/badge/docker-ready-cyan.svg)](https://www.docker.com/)
 
 **Home should be a sanctuary, not a source of stress.**
@@ -144,7 +144,7 @@ For best performance on a **Synology NAS**, run the container in **Host Network 
 ## 🧪 Tested Environments
 
 - Docker with host networking on local LAN.
-- Python 3.10+ runtime (container and local development).
+- Python 3.14+ runtime (container and local development).
 - Synology NAS deployment using `deployment/docker-compose.yml`.
 
 ---
