@@ -3,7 +3,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 
-_RETRYABLE_METHODS = frozenset({"GET", "POST"})
+_RETRYABLE_METHODS = frozenset({"GET"})
 
 
 def _build_session() -> requests.Session:
