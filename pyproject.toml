@@ -24,5 +24,6 @@ files = [
   "app/core/control.py",
   "app/core/status.py",
   "app/core/discovery.py",
+  "app/api/routes.py",
   "app/scheduler/jobs.py",
 ]
