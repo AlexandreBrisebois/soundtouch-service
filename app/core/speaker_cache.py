@@ -1,7 +1,7 @@
 import logging
 import threading
 import time
-from typing import Optional, Dict, Any
+from typing import Any
 import xml.etree.ElementTree as ET
 import websocket
 from app.core.constants import (
@@ -20,17 +20,17 @@ logger = logging.getLogger(__name__)
 # Global Speaker State Store
 # ---------------------------------------------------------------------------
 # { "Speaker Name": { "status": "...", "source": "...", "volume": 20, "updated_at": ... } }
-_speaker_state: Dict[str, Dict[str, Any]] = {}
+_speaker_state: dict[str, dict[str, Any]] = {}
 _state_lock = threading.Lock()
-_listener_threads: Dict[str, threading.Thread] = {}
+_listener_threads: dict[str, threading.Thread] = {}
 _listener_lock = threading.Lock()
 
-def get_speaker_state(name: str) -> Optional[Dict[str, Any]]:
+def get_speaker_state(name: str) -> dict[str, Any] | None:
     """Return the cached state for a speaker, or None if not cached."""
     with _state_lock:
         return _speaker_state.get(name)
 
-def update_cache(name: str, data: Dict[str, Any]) -> None:
+def update_cache(name: str, data: dict[str, Any]) -> None:
     """Atomically update the cache with new data."""
     with _state_lock:
         if name not in _speaker_state:
@@ -58,13 +58,13 @@ def _on_message(ws: websocket.WebSocketApp, message: str, speaker_name: str, ip:
                 if vol is not None:
                     update_cache(speaker_name, {"volume": vol})
                     
-    except Exception as e:
+    except ET.ParseError as e:
         logger.warning("WebSocket message processing failed for %s: %s", speaker_name, e)
 
 def _on_error(ws: websocket.WebSocketApp, error: Exception, speaker_name: str) -> None:
     logger.warning("WebSocket error for %s: %s", speaker_name, error)
 
-def _on_close(ws: websocket.WebSocketApp, close_status_code: Optional[int], close_msg: Optional[str], speaker_name: str) -> None:
+def _on_close(ws: websocket.WebSocketApp, close_status_code: int | None, close_msg: str | None, speaker_name: str) -> None:
     logger.info("WebSocket closed for %s (code=%s, message=%s). Reconnecting in %ss.", speaker_name, close_status_code, close_msg, WEBSOCKET_CLOSE_RETRY_DELAY_SECONDS)
     time.sleep(WEBSOCKET_CLOSE_RETRY_DELAY_SECONDS)
 
@@ -99,7 +99,7 @@ def listen_to_speaker(name: str, ip: str) -> None:
             logger.warning("WebSocket listener loop error for %s: %s. Retrying in %ss.", name, e, WEBSOCKET_LOOP_RETRY_DELAY_SECONDS)
             time.sleep(WEBSOCKET_LOOP_RETRY_DELAY_SECONDS)
 
-def start_ws_listeners(devices: list[Dict[str, str]]) -> None:
+def start_ws_listeners(devices: list[dict[str, str]]) -> None:
     """Start a listener thread for each discovered device."""
     with _listener_lock:
         existing_names = set(_listener_threads.keys())

@@ -1,6 +1,5 @@
 import re
-import threading
-from typing import Optional, Dict, Any, Tuple, Union
+from typing import Any
 from flask import Blueprint, jsonify, request, render_template, current_app, send_from_directory, make_response
 from app.core.constants import (
   DEFAULT_FADE_IN_DURATION_SECONDS,
@@ -18,7 +17,7 @@ VALID_DAYS = {
 TIME_PATTERN = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 
 
-def _coerce_int(value: Any, field_name: str, errors: Dict[str, str], minimum: Optional[int] = None, maximum: Optional[int] = None) -> Optional[int]:
+def _coerce_int(value: Any, field_name: str, errors: dict[str, str], minimum: int | None = None, maximum: int | None = None) -> int | None:
   if isinstance(value, bool):
     errors[field_name] = f"'{field_name}' must be an integer."
     return None
@@ -37,7 +36,7 @@ def _coerce_int(value: Any, field_name: str, errors: Dict[str, str], minimum: Op
   return coerced
 
 
-def _coerce_non_negative_number(value: Any, field_name: str, errors: Dict[str, str], default_value: Union[int, float]) -> Optional[Union[int, float]]:
+def _coerce_non_negative_number(value: Any, field_name: str, errors: dict[str, str], default_value: int | float) -> int | float | None:
   if value is None:
     return default_value
   if isinstance(value, bool):
@@ -56,7 +55,7 @@ def _coerce_non_negative_number(value: Any, field_name: str, errors: Dict[str, s
   return coerced
 
 
-def _validate_schedule_payload(data: Any) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, str]]]:
+def _validate_schedule_payload(data: Any) -> tuple[dict[str, Any] | None, dict[str, str] | None]:
   if not isinstance(data, dict):
     return None, {"body": "Expected a JSON object."}
 
@@ -147,7 +146,7 @@ def _validate_schedule_payload(data: Any) -> Tuple[Optional[Dict[str, Any]], Opt
   return normalized, None
 
 @api_bp.route("/", methods=["GET"])
-def ui_root() -> Tuple[Any, int, Dict[str, str]]:
+def ui_root() -> tuple[Any, int, dict[str, str]]:
     """Serve the Web UI single-page application."""
     response = make_response(render_template("index.html"))
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
@@ -184,7 +183,7 @@ def api_get_schedules() -> Any:
     return jsonify(jobs.get_current_config())
 
 @api_bp.route("/api/<speaker_name>/schedules", methods=["POST"])
-def api_add_schedule(speaker_name: str) -> Tuple[Any, int]:
+def api_add_schedule(speaker_name: str) -> tuple[Any, int]:
     """
     Add or Update a Schedule
     Push a new schedule or update an existing schedule by name for the given speaker. 
@@ -244,7 +243,7 @@ def api_add_schedule(speaker_name: str) -> Tuple[Any, int]:
     return jsonify({"message": f"Schedule '{normalized['name']}' queued for processing on '{speaker_name}'"}), 202
 
 @api_bp.route("/api/<speaker_name>/schedules/<schedule_name>", methods=["DELETE"])
-def api_delete_schedule(speaker_name: str, schedule_name: str) -> Tuple[Any, int]:
+def api_delete_schedule(speaker_name: str, schedule_name: str) -> tuple[Any, int]:
     """
     Delete a Schedule
     Remove a schedule from a specific speaker by its exact name.
@@ -274,7 +273,7 @@ def api_delete_schedule(speaker_name: str, schedule_name: str) -> Tuple[Any, int
 
 
 @api_bp.route("/api/<speaker_name>/schedules/<schedule_name>/pause", methods=["PATCH"])
-def api_pause_schedule(speaker_name: str, schedule_name: str) -> Tuple[Any, int]:
+def api_pause_schedule(speaker_name: str, schedule_name: str) -> tuple[Any, int]:
     """
     Pause a Schedule
     Temporarily pause a schedule by name. The schedule is kept but skipped by the scheduler until resumed.
@@ -314,7 +313,7 @@ def api_pause_schedule(speaker_name: str, schedule_name: str) -> Tuple[Any, int]
 
 
 @api_bp.route("/api/<speaker_name>/schedules/<schedule_name>/resume", methods=["PATCH"])
-def api_resume_schedule(speaker_name: str, schedule_name: str) -> Tuple[Any, int]:
+def api_resume_schedule(speaker_name: str, schedule_name: str) -> tuple[Any, int]:
     """
     Resume a Schedule
     Resume a previously paused schedule so the scheduler will execute it again.
@@ -354,7 +353,7 @@ def api_resume_schedule(speaker_name: str, schedule_name: str) -> Tuple[Any, int
 
 
 @api_bp.route("/api/<speaker_name>/schedules/<schedule_name>/trigger", methods=["POST"])
-def api_trigger_schedule(speaker_name: str, schedule_name: str) -> Tuple[Any, int]:
+def api_trigger_schedule(speaker_name: str, schedule_name: str) -> tuple[Any, int]:
     """
     Manually Trigger a Schedule
     Immediately execute the 'ON' sequence for a specific schedule.
@@ -380,18 +379,15 @@ def api_trigger_schedule(speaker_name: str, schedule_name: str) -> Tuple[Any, in
     if target is None:
         return jsonify({"error": f"Schedule '{schedule_name}' not found for speaker '{speaker_name}'"}), 404
 
-    threading.Thread(
-        target=jobs.auto_on_job,
-        args=(
-            speaker_name,
-            target.get("preset", DEFAULT_PRESET),
-            target.get("volume", DEFAULT_VOLUME),
-            target.get("source"),
-            target.get("fade_in_duration", DEFAULT_FADE_IN_DURATION_SECONDS),
-            True  # force=True
-        ),
-        daemon=True
-    ).start()
+    jobs.submit_background_task(
+      jobs.auto_on_job,
+      speaker_name,
+      target.get("preset", DEFAULT_PRESET),
+      target.get("volume", DEFAULT_VOLUME),
+      target.get("source"),
+      target.get("fade_in_duration", DEFAULT_FADE_IN_DURATION_SECONDS),
+      True,
+    )
 
     return jsonify({"message": f"Manually triggering schedule '{schedule_name}' on '{speaker_name}'"}), 202
 
@@ -419,7 +415,7 @@ def api_discover() -> Any:
     return jsonify(devices)
 
 @api_bp.route("/api/<speaker_name>/status", methods=["GET"])
-def api_status(speaker_name: str) -> Tuple[Any, int]:
+def api_status(speaker_name: str) -> tuple[Any, int]:
     """
     Get Speaker Status
     Query a device to see what it is currently playing or if it is in STANDBY.
@@ -451,7 +447,7 @@ def api_status(speaker_name: str) -> Tuple[Any, int]:
     return jsonify({"speaker": speaker_name, "ip": ip, "volume": volume, **status_data})
 
 @api_bp.route("/api/<speaker_name>/power", methods=["POST"])
-def api_power(speaker_name: str) -> Tuple[Any, int]:
+def api_power(speaker_name: str) -> tuple[Any, int]:
     """
     Toggle Speaker Power
     Toggles the power state of the speaker. Note that SoundTouch APIs only offer a power toggle.
@@ -475,7 +471,7 @@ def api_power(speaker_name: str) -> Tuple[Any, int]:
     return jsonify({"message": f"Sent POWER toggle signal to {speaker_name} at {ip}"})
 
 @api_bp.route("/api/<speaker_name>/preset/<int:preset_id>", methods=["POST"])
-def api_preset(speaker_name: str, preset_id: int) -> Tuple[Any, int]:
+def api_preset(speaker_name: str, preset_id: int) -> tuple[Any, int]:
     """
     Play Speaker Preset
     Triggers one of the 6 numeric preset shortcut buttons on the speaker.
@@ -506,7 +502,7 @@ def api_preset(speaker_name: str, preset_id: int) -> Tuple[Any, int]:
     return jsonify({"message": f"Playing PRESET_{preset_id} on {speaker_name} at {ip}"})
 
 @api_bp.route("/api/<speaker_name>/volume", methods=["POST"])
-def api_volume(speaker_name: str) -> Tuple[Any, int]:
+def api_volume(speaker_name: str) -> tuple[Any, int]:
     """
     Set Speaker Volume
     Sets the volume level from 0 to 100 on the specified network speaker.

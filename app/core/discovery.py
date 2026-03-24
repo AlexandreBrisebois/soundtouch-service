@@ -2,7 +2,7 @@ import logging
 import time
 import socket
 import threading
-from typing import Optional, List, Dict, Any, Callable
+from typing import Callable
 from zeroconf import ServiceBrowser, Zeroconf
 from app.core.constants import (
     DISCOVERY_REFRESH_INTERVAL_SECONDS,
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 class SoundTouchListener:
     def __init__(self) -> None:
-        self.devices: List[Dict[str, str]] = []
+        self.devices: list[dict[str, str]] = []
 
     def remove_service(self, zeroconf: Zeroconf, type: str, name: str) -> None:
         pass
@@ -30,14 +30,14 @@ class SoundTouchListener:
     def update_service(self, zeroconf: Zeroconf, type: str, name: str) -> None:
         pass
 
-def discover_systems(timeout: float = DISCOVERY_SCAN_TIMEOUT_SECONDS) -> List[Dict[str, str]]:
+def discover_systems(timeout: float = DISCOVERY_SCAN_TIMEOUT_SECONDS) -> list[dict[str, str]]:
     """
     Scans the local network for Bose SoundTouch devices using mDNS.
     Returns a list of dictionaries containing device names and IP addresses.
     """
     zeroconf = Zeroconf()
     listener = SoundTouchListener()
-    browser = ServiceBrowser(zeroconf, "_soundtouch._tcp.local.", listener)
+    ServiceBrowser(zeroconf, "_soundtouch._tcp.local.", listener)
     time.sleep(timeout)
     zeroconf.close()
     return listener.devices
@@ -52,7 +52,7 @@ if __name__ == "__main__":
 # ---------------------------------------------------------------------------
 # Device IP Cache
 # ---------------------------------------------------------------------------
-_device_cache: Dict[str, str] = {}       # name → IP
+_device_cache: dict[str, str] = {}       # name → IP
 _cache_lock = threading.Lock()
 
 def refresh_cache() -> None:
@@ -87,12 +87,12 @@ def get_device_ip(name: str):
     with _cache_lock:
         return _device_cache.get(name)
 
-def get_all_cached_devices() -> List[Dict[str, str]]:
+def get_all_cached_devices() -> list[dict[str, str]]:
     """Return a list of dicts matching the discover_systems() format."""
     with _cache_lock:
         return [{"name": n, "ip": ip} for n, ip in _device_cache.items()]
 
-def _cache_refresh_loop(on_refresh: Optional[Callable[[List[Dict[str, str]]], None]] = None, delay_first: bool = False) -> None:
+def _cache_refresh_loop(on_refresh: Callable[[list[dict[str, str]]], None] | None = None, delay_first: bool = False) -> None:
     """Background loop: refresh cache every 5 minutes."""
     if delay_first:
         time.sleep(DISCOVERY_REFRESH_INTERVAL_SECONDS)
@@ -102,7 +102,7 @@ def _cache_refresh_loop(on_refresh: Optional[Callable[[List[Dict[str, str]]], No
             on_refresh(get_all_cached_devices())
         time.sleep(DISCOVERY_REFRESH_INTERVAL_SECONDS)
 
-def start_device_cache(on_refresh: Optional[Callable[[List[Dict[str, str]]], None]] = None) -> None:
+def start_device_cache(on_refresh: Callable[[list[dict[str, str]]], None] | None = None) -> None:
     """Start the background cache refresh thread. Call once at startup."""
     initial_refresh_ok = safe_refresh_cache()
     if initial_refresh_ok and on_refresh is not None:

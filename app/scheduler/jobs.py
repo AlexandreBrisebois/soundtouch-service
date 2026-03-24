@@ -5,7 +5,8 @@ import time
 import threading
 import queue
 import re
-from typing import Optional, Dict, Any, List
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 from app.core.constants import (
     DEFAULT_FADE_IN_DURATION_SECONDS,
     DEFAULT_FADE_OUT_DURATION_SECONDS,
@@ -22,12 +23,16 @@ CONFIG_FILE = os.getenv("CONFIG_FILE", "config.json")
 config_queue = queue.Queue()
 VALID_DAYS = {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
 TIME_PATTERN = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+BACKGROUND_WORKER_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="jobs-bg")
+
+Schedule = dict[str, Any]
+SpeakerSchedules = dict[str, list[Schedule]]
 
 # In-memory config accessed by scheduler and API GETs
-current_config: Dict[str, List[Dict[str, Any]]] = {}
+current_config: SpeakerSchedules = {}
 logger = logging.getLogger(__name__)
 
-def get_default_config() -> Dict[str, List[Dict[str, Any]]]:
+def get_default_config() -> SpeakerSchedules:
     return {
         "Target Speaker 1": [
             {
@@ -45,7 +50,7 @@ def get_default_config() -> Dict[str, List[Dict[str, Any]]]:
     }
 
 
-def _coerce_int(value: Any, default: int, minimum: Optional[int] = None, maximum: Optional[int] = None) -> int:
+def _coerce_int(value: Any, default: int, minimum: int | None = None, maximum: int | None = None) -> int:
     try:
         coerced = int(value)
     except (TypeError, ValueError):
@@ -66,7 +71,7 @@ def _coerce_non_negative_float(value: Any, default: float) -> float:
     return max(0.0, coerced)
 
 
-def _normalize_time(value: Any) -> Optional[str]:
+def _normalize_time(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
     candidate = value.strip()
@@ -75,7 +80,7 @@ def _normalize_time(value: Any) -> Optional[str]:
     return None
 
 
-def _normalize_schedule(schedule: Any, speaker_name: str, index: int) -> Optional[Dict[str, Any]]:
+def _normalize_schedule(schedule: Any, speaker_name: str, index: int) -> Schedule | None:
     if not isinstance(schedule, dict):
         logger.warning("Skipping invalid schedule #%s for '%s': expected an object.", index + 1, speaker_name)
         return None
@@ -130,7 +135,7 @@ def _normalize_schedule(schedule: Any, speaker_name: str, index: int) -> Optiona
     }
 
 
-def sanitize_config(config: Any) -> Optional[Dict[str, List[Dict[str, Any]]]]:
+def sanitize_config(config: Any) -> SpeakerSchedules | None:
     if config is None:
         return None
     if not isinstance(config, dict):
@@ -157,7 +162,7 @@ def sanitize_config(config: Any) -> Optional[Dict[str, List[Dict[str, Any]]]]:
 
     return sanitized
 
-def load_config() -> Optional[Dict[str, List[Dict[str, Any]]]]:
+def load_config() -> SpeakerSchedules | None:
     if not os.path.exists(CONFIG_FILE):
         default_config = get_default_config()
         try:
@@ -242,7 +247,7 @@ def config_io_worker() -> None:
         finally:
             config_queue.task_done()
 
-def auto_on_job(speaker_name: str, preset: Optional[int], volume: int, source: Optional[str] = None, fade_in_duration: float = DEFAULT_FADE_IN_DURATION_SECONDS, force: bool = False) -> None:
+def auto_on_job(speaker_name: str, preset: int | None, volume: int, source: str | None = None, fade_in_duration: float = DEFAULT_FADE_IN_DURATION_SECONDS, force: bool = False) -> None:
     logger.info("Auto-ON triggered for '%s'.", speaker_name)
     target_ip = discovery.get_device_ip(speaker_name)
 
@@ -348,6 +353,11 @@ def auto_off_job(speaker_name: str, fade_out_duration: float = DEFAULT_FADE_OUT_
         logger.info("Speaker '%s' is already in standby/offline mode. No action needed.", speaker_name)
 
 
+def submit_background_task(func: Any, *args: Any, **kwargs: Any) -> None:
+    """Submit a background task onto the bounded worker pool."""
+    BACKGROUND_WORKER_POOL.submit(func, *args, **kwargs)
+
+
 def run_scheduler_loop() -> None:
     global current_config
     current_config = load_config() or {}
@@ -391,30 +401,21 @@ def run_scheduler_loop() -> None:
                         fade_in_duration = schedule.get("fade_in_duration", DEFAULT_FADE_IN_DURATION_SECONDS)
                         source_log = f"Source: {source}" if source else f"Preset: {preset}"
                         logger.info("[%s] '%s' for '%s' ON event triggered (%s, target volume=%s, fade=%ss).", current_time_str, schedule.get('name'), speaker_name, source_log, volume, fade_in_duration)
-                        threading.Thread(
-                            target=auto_on_job, 
-                            args=(speaker_name, preset, volume, source, fade_in_duration), 
-                            daemon=True
-                        ).start()
+                        submit_background_task(auto_on_job, speaker_name, preset, volume, source, fade_in_duration)
                         
                     if current_time_str == off_time:
                         fade_out_duration = schedule.get("fade_out_duration", DEFAULT_FADE_OUT_DURATION_SECONDS)
                         logger.info("[%s] '%s' for '%s' OFF event triggered (fade=%ss).", current_time_str, schedule.get('name'), speaker_name, fade_out_duration)
-                        threading.Thread(
-                            target=auto_off_job, 
-                            args=(speaker_name, fade_out_duration), 
-                            daemon=True
-                        ).start()
+                        submit_background_task(auto_off_job, speaker_name, fade_out_duration)
                     
         time.sleep(SCHEDULER_LOOP_INTERVAL_SECONDS)
 
 def start_daemon() -> None:
-    # Start the IO worker
+    # Keep long-running loops on dedicated daemon threads.
     threading.Thread(target=config_io_worker, daemon=True).start()
-    # Start the scheduler
     threading.Thread(target=run_scheduler_loop, daemon=True).start()
 
-def get_current_config() -> Dict[str, List[Dict[str, Any]]]:
+def get_current_config() -> SpeakerSchedules:
     global current_config
     if not current_config:
         current_config = load_config() or {}

@@ -26,7 +26,13 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pytest
+          pip install -r requirements.txt pytest ruff mypy
+
+      - name: Run Ruff
+        run: ruff check app tests
+
+      - name: Run MyPy
+        run: mypy app/core/http_client.py app/core/control.py app/core/status.py --ignore-missing-imports --disable-error-code=import-untyped
 
       - name: Run test suite
         run: pytest -q
