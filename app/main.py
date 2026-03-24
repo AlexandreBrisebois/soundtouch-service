@@ -1,10 +1,31 @@
 import logging
 import os
+import atexit
+import threading
 from flask import Flask
 from flasgger import Swagger
 from app.api.routes import api_bp
 from app.core import discovery, speaker_cache
 from app.scheduler import jobs
+
+
+_shutdown_registered = False
+_shutdown_lock = threading.Lock()
+
+
+def _shutdown_background_services() -> None:
+    speaker_cache.stop_ws_listeners()
+    discovery.stop_device_cache()
+    jobs.shutdown_daemon()
+
+
+def _register_shutdown_once() -> None:
+    global _shutdown_registered
+    with _shutdown_lock:
+        if _shutdown_registered:
+            return
+        atexit.register(_shutdown_background_services)
+        _shutdown_registered = True
 
 
 def configure_logging():
@@ -18,6 +39,7 @@ def configure_logging():
 
 def create_app():
     configure_logging()
+    _register_shutdown_once()
     app_instance = Flask(
         __name__,
         template_folder=os.path.join(os.path.dirname(__file__), "templates"),
