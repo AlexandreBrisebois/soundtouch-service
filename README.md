@@ -24,17 +24,24 @@ When Bose released their API documentation, I saw a chance to give the SoundTouc
 
 <table>
   <tr>
-    <td width="33%" align="center">
+    <td width="50%" align="center">
       <img src="docs/assets/hub_view.png" alt="Wisp Hub View"><br>
       <b>The Hub</b><br>
       <i>Real-time status for your speakers.</i>
     </td>
-    <td width="33%" align="center">
+    <td width="50%" align="center">
       <img src="docs/assets/detail_view.png" alt="Wisp Detail View"><br>
       <b>Detail View</b><br>
       <i>Manage schedules and precise routines.</i>
     </td>
-    <td width="33%" align="center">
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/assets/more_menu.png" alt="Wisp More Menu"><br>
+      <b>The Menu</b><br>
+      <i>Quick access to manual triggers.</i>
+    </td>
+    <td width="50%" align="center">
       <img src="docs/assets/editor.png" alt="Wisp Editor View"><br>
       <b>The Editor</b><br>
       <i>Create gentle fade-in transitions.</i>

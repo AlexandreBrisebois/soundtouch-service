@@ -29,9 +29,9 @@
       --bg:          #FAF7F2;
       --surface:     #FCFBFA;
       --surface-2:   #F5F5F4;
-      --primary:     #57534E;
-      --primary-lt:  #E7E5E4;
-      --primary-dk:  #292524;
+      --primary:     #7AA69E;
+      --primary-lt:  #E8F1EF;
+      --primary-dk:  #5E827B;
       --paused:      #94A3B8;
       --paused-bg:   #F1F5F9;
       --danger:      #EF4444;
@@ -247,11 +247,11 @@
     }
     .btn-power:active { opacity: 0.8; transform: scale(0.98); }
     .btn-power-single {
-      background: var(--surface); color: var(--text);
+      background: var(--primary-lt); color: var(--primary-dk);
       border: 1.5px solid var(--border);
     }
     .btn-turn-off-all {
-      background: transparent; color: var(--danger);
+      background: var(--danger-lt); color: var(--danger);
       border: 1.5px solid var(--danger);
     }
 
@@ -633,7 +633,6 @@
     <div class="sheet-title" id="more-sheet-name"></div>
     <button class="sheet-btn sheet-btn-confirm" id="sheet-btn-trigger">▶ Run Now</button>
     <button class="sheet-btn sheet-btn-danger" id="sheet-btn-delete">🗑 Delete Schedule</button>
-    <button class="sheet-btn sheet-btn-cancel" id="sheet-btn-more-cancel">Cancel</button>
   </div>
 </div>
 

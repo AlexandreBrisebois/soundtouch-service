@@ -106,7 +106,7 @@ def config_io_worker():
         except Exception as e:
             print(f"[IO Manager] Error processing mutation: {e}")
 
-def auto_on_job(speaker_name, preset, volume, source=None, fade_in_duration=300):
+def auto_on_job(speaker_name, preset, volume, source=None, fade_in_duration=300, force=False):
     print(f"[Scheduler] Auto-ON triggered for '{speaker_name}'...")
     target_ip = discovery.get_device_ip(speaker_name)
 
@@ -118,14 +118,19 @@ def auto_on_job(speaker_name, preset, volume, source=None, fade_in_duration=300)
     speaker_status = status_data.get("status", "OFFLINE")
     print(f"[Scheduler] '{speaker_name}' current status is '{speaker_status}'")
     
-    if speaker_status != "STANDBY" and speaker_status != "OFFLINE":
+    is_active = speaker_status.upper() not in ["STANDBY", "OFFLINE"]
+    
+    if is_active and not force:
         print(f"[Scheduler] '{speaker_name}' is already active. Ignoring ON event to prevent interruption.")
         return
         
-    print(f"[Scheduler] '{speaker_name}' is {speaker_status}. Turning on...")
-    if control.power_action(target_ip):
-        # Wait a moment for speaker to boot and accept additional commands
-        time.sleep(3)
+    if not is_active:
+        print(f"[Scheduler] '{speaker_name}' is {speaker_status}. Turning on...")
+        if control.power_action(target_ip):
+            # Wait a moment for speaker to boot and accept additional commands
+            time.sleep(3)
+    else:
+        print(f"[Scheduler] '{speaker_name}' is active, but 'force=True' was provided. Proceeding with routine.")
         
         if source == "AUX":
             print(f"[Scheduler] '{speaker_name}' switching to AUX input...")
@@ -137,6 +142,7 @@ def auto_on_job(speaker_name, preset, volume, source=None, fade_in_duration=300)
         time.sleep(1)
         
         print(f"[Scheduler] '{speaker_name}' starting volume fade-in to {volume} over {fade_in_duration}s...")
+        # Ensure we start with a clean state if we are forcing/overriding
         control.set_volume(target_ip, 0)
         
         if fade_in_duration <= 0 or volume <= 0:
@@ -150,7 +156,7 @@ def auto_on_job(speaker_name, preset, volume, source=None, fade_in_duration=300)
             
             if v % 5 == 0 or sleep_interval > 5:
                 status_data = status.get_now_playing(target_ip)
-                if status_data.get("status") == "STANDBY":
+                if status_data.get("status", "").upper() == "STANDBY":
                     print(f"[Scheduler] Fade-in aborted: '{speaker_name}' was manually turned off mid-fade.")
                     return
                     
@@ -170,7 +176,7 @@ def auto_off_job(speaker_name, fade_out_duration=60):
     speaker_status = status_data.get("status", "OFFLINE")
     print(f"[Scheduler] '{speaker_name}' current status is '{speaker_status}'")
     
-    if speaker_status != "STANDBY" and speaker_status != "OFFLINE":
+    if speaker_status.upper() not in ["STANDBY", "OFFLINE"]:
         print(f"[Scheduler] Speaker is active. Starting volume fade-out over {fade_out_duration}s.")
         
         current_volume = status.get_volume(target_ip)
@@ -181,7 +187,7 @@ def auto_off_job(speaker_name, fade_out_duration=60):
                 
                 if v % 5 == 0 or sleep_interval > 5:
                     status_data = status.get_now_playing(target_ip)
-                    if status_data.get("status") == "STANDBY":
+                    if status_data.get("status", "").upper() == "STANDBY":
                         print(f"[Scheduler] Fade-out aborted: '{speaker_name}' was already turned off.")
                         return
                         
@@ -190,7 +196,7 @@ def auto_off_job(speaker_name, fade_out_duration=60):
         print(f"[Scheduler] Sending power off signal to '{speaker_name}'.")
         control.power_action(target_ip)
     else:
-        print(f"[Scheduler] Speaker is already in STANDBY mode. No action needed.")
+        print(f"[Scheduler] Speaker is already in STANDBY/OFFLINE mode. No action needed.")
 
 
 def run_scheduler_loop():

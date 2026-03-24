@@ -240,7 +240,8 @@ def api_trigger_schedule(speaker_name, schedule_name):
             target.get("preset", 1),
             target.get("volume", 20),
             target.get("source"),
-            target.get("fade_in_duration", 300)
+            target.get("fade_in_duration", 300),
+            True  # force=True
         ),
         daemon=True
     ).start()
