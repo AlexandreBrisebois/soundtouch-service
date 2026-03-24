@@ -25,7 +25,7 @@ class MyListener:
 def discover_speaker(target_name, timeout=5):
     zeroconf = Zeroconf()
     listener = MyListener(target_name)
-    browser = ServiceBrowser(zeroconf, "_soundtouch._tcp.local.", listener)
+    ServiceBrowser(zeroconf, "_soundtouch._tcp.local.", listener)
     time.sleep(timeout)
     zeroconf.close()
     return listener.target_ip

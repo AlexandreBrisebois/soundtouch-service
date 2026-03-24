@@ -18,10 +18,14 @@ Thanks for taking the time to contribute.
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt ruff mypy pre-commit
+pre-commit install
+pre-commit run --all-files
 python -m app.main
 pytest -q
 ```
+
+Pre-commit hooks are part of the expected contributor workflow and should be run before opening a pull request.
 
 ## Pull Request Guidelines
 

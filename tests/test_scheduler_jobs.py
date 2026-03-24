@@ -1,4 +1,6 @@
 from app.scheduler import jobs
+import json
+import logging
 
 
 def test_auto_on_job_force_from_standby_applies_preset_then_fade(monkeypatch):
@@ -199,3 +201,146 @@ def test_sanitize_config_normalizes_legacy_entries():
             }
         ]
     }
+
+
+def test_load_config_migrates_legacy_document_to_versioned_format(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.json"
+    legacy = {
+        "Living Room": [
+            {
+                "name": "Morning",
+                "days": ["monday"],
+                "on_time": "06:15",
+                "off_time": "07:00",
+                "preset": 1,
+                "volume": 10,
+            }
+        ]
+    }
+    config_path.write_text(json.dumps(legacy), encoding="utf-8")
+    monkeypatch.setattr(jobs, "CONFIG_FILE_PATH", config_path)
+
+    loaded = jobs.load_config()
+    assert loaded is not None
+    assert "Living Room" in loaded
+
+    document = json.loads(config_path.read_text(encoding="utf-8"))
+    assert document["version"] == jobs.CONFIG_SCHEMA_VERSION
+    assert "schedules" in document
+
+
+def test_load_config_reads_versioned_document(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.json"
+    versioned = {
+        "version": jobs.CONFIG_SCHEMA_VERSION,
+        "schedules": {
+            "Bedroom": [
+                {
+                    "name": "Wind Down",
+                    "days": ["sunday"],
+                    "on_time": "21:00",
+                    "off_time": "22:00",
+                    "source": "AUX",
+                    "volume": 15,
+                }
+            ]
+        },
+    }
+    config_path.write_text(json.dumps(versioned), encoding="utf-8")
+    monkeypatch.setattr(jobs, "CONFIG_FILE_PATH", config_path)
+
+    loaded = jobs.load_config()
+    assert loaded == {
+        "Bedroom": [
+            {
+                "name": "Wind Down",
+                "days": ["sunday"],
+                "on_time": "21:00",
+                "off_time": "22:00",
+                "preset": None,
+                "source": "AUX",
+                "volume": 15,
+                "fade_in_duration": jobs.DEFAULT_FADE_IN_DURATION_SECONDS,
+                "fade_out_duration": jobs.DEFAULT_FADE_OUT_DURATION_SECONDS,
+                "paused": False,
+            }
+        ]
+    }
+
+
+def test_sanitize_config_emits_structured_warning_fields(caplog):
+    bad_config = {
+        "Living Room": [
+            {
+                "name": "Bad",
+                "days": ["notaday"],
+                "on_time": "06:15",
+                "off_time": "07:00",
+            }
+        ]
+    }
+
+    with caplog.at_level(logging.WARNING, logger="app.scheduler.jobs"):
+        result = jobs.sanitize_config(bad_config)
+
+    assert result == {}
+    matching = [
+        rec for rec in caplog.records
+        if rec.msg == "Skipping schedule: no valid day names."
+    ]
+    assert matching
+    assert matching[0].event_fields["speaker"] == "Living Room"
+    assert matching[0].event_fields["schedule"] == "Bad"
+
+
+def test_background_worker_pool_recreated_after_shutdown(monkeypatch):
+    """Verify that start_daemon() recreates the pool after shutdown_daemon() teardown."""
+    monkeypatch.setattr(jobs, "_config_worker_thread", None)
+    monkeypatch.setattr(jobs, "_scheduler_thread", None)
+    monkeypatch.setattr(jobs, "BACKGROUND_WORKER_POOL", None)
+
+    # Prevent real threads from starting
+    class FakeThread:
+        def __init__(self, *args, **kwargs):
+            pass
+        def start(self):
+            pass
+        def is_alive(self):
+            return False
+        def join(self, timeout=None):
+            pass
+
+    monkeypatch.setattr(jobs.threading, "Thread", FakeThread)
+
+    # start_daemon() should create the pool when it is None
+    jobs.start_daemon()
+    assert jobs.BACKGROUND_WORKER_POOL is not None
+    pool_first = jobs.BACKGROUND_WORKER_POOL
+
+    # shutdown_daemon() should shut down and reset the pool to None
+    jobs.shutdown_daemon(timeout=0.1)
+    assert jobs.BACKGROUND_WORKER_POOL is None
+
+    # start_daemon() should recreate the pool after shutdown
+    jobs.start_daemon()
+    assert jobs.BACKGROUND_WORKER_POOL is not None
+    assert jobs.BACKGROUND_WORKER_POOL is not pool_first
+
+    # Cleanup
+    jobs.shutdown_daemon(timeout=0.1)
+
+
+def test_submit_background_task_drops_task_when_pool_is_none(monkeypatch, caplog):
+    """Verify submit_background_task() logs a warning and returns when pool is None."""
+    monkeypatch.setattr(jobs, "BACKGROUND_WORKER_POOL", None)
+
+    called = []
+
+    with caplog.at_level(logging.WARNING, logger="app.scheduler.jobs"):
+        jobs.submit_background_task(lambda: called.append(True))
+
+    assert not called
+    assert any(
+        rec.levelname == "WARNING" and "task dropped" in rec.message
+        for rec in caplog.records
+    )

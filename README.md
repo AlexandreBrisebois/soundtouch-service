@@ -7,7 +7,7 @@
 > **A second life for your Bose SoundTouch home.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.14+](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/downloads/)
 [![Docker](https://img.shields.io/badge/docker-ready-cyan.svg)](https://www.docker.com/)
 
 **Home should be a sanctuary, not a source of stress.**
@@ -144,7 +144,7 @@ For best performance on a **Synology NAS**, run the container in **Host Network 
 ## 🧪 Tested Environments
 
 - Docker with host networking on local LAN.
-- Python 3.9+ runtime (container and local development).
+- Python 3.14+ runtime (container and local development).
 - Synology NAS deployment using `deployment/docker-compose.yml`.
 
 ---
@@ -155,6 +155,46 @@ For best performance on a **Synology NAS**, run the container in **Host Network 
 - [Security Policy](SECURITY.md)
 - [Code of Conduct](CODE_OF_CONDUCT.md)
 - [Changelog](CHANGELOG.md)
+
+## 🧰 Developer Quality Gates
+
+Wisp enforces lightweight quality checks in CI and supports the same checks locally.
+
+```bash
+pip install -r requirements.txt ruff mypy pre-commit
+pre-commit install
+pre-commit run --all-files
+```
+
+Tooling configuration lives in `pyproject.toml` and CI runs the same checks from `.github/workflows/tests.yml`.
+
+## 📄 Config Schema Migration
+
+The scheduler configuration file now uses a versioned document format:
+
+```json
+{
+  "version": 1,
+  "schedules": {
+    "Living Room": [
+      {
+        "name": "Morning Routine",
+        "days": ["monday"],
+        "on_time": "06:15",
+        "off_time": "07:30",
+        "preset": 1,
+        "source": null,
+        "volume": 10,
+        "fade_in_duration": 300,
+        "fade_out_duration": 60,
+        "paused": false
+      }
+    ]
+  }
+}
+```
+
+Legacy root-level schedule maps are auto-migrated on load. Keep a backup of `config.json` before upgrading in production.
 
 ---
 

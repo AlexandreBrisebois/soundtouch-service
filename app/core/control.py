@@ -1,8 +1,9 @@
 import logging
-from typing import Optional
 
-import requests
+from requests.exceptions import RequestException
+
 from app.core.constants import HTTP_POST_TIMEOUT_SECONDS, SOUNDTOUCH_HTTP_PORT
+from app.core.http_client import session
 
 
 logger = logging.getLogger(__name__)
@@ -13,10 +14,10 @@ def send_key(ip: str, key: str) -> bool:
     payload_press = f'<?xml version="1.0" ?><key state="press" sender="Gabbo">{key}</key>'
     payload_release = f'<?xml version="1.0" ?><key state="release" sender="Gabbo">{key}</key>'
     try:
-        requests.post(url, data=payload_press, timeout=HTTP_POST_TIMEOUT_SECONDS)
-        requests.post(url, data=payload_release, timeout=HTTP_POST_TIMEOUT_SECONDS)
+        session.post(url, data=payload_press, timeout=HTTP_POST_TIMEOUT_SECONDS)
+        session.post(url, data=payload_release, timeout=HTTP_POST_TIMEOUT_SECONDS)
         return True
-    except Exception as e:
+    except RequestException as e:
         logger.error("Failed to send key '%s' to %s: %s", key, ip, e)
         return False
 
@@ -25,9 +26,9 @@ def set_volume(ip: str, volume: int) -> bool:
     url = f"http://{ip}:{SOUNDTOUCH_HTTP_PORT}/volume"
     payload = f'<?xml version="1.0" ?><volume>{volume}</volume>'
     try:
-        requests.post(url, data=payload, timeout=HTTP_POST_TIMEOUT_SECONDS)
+        session.post(url, data=payload, timeout=HTTP_POST_TIMEOUT_SECONDS)
         return True
-    except Exception as e:
+    except RequestException as e:
         logger.error("Failed to set volume %s on %s: %s", volume, ip, e)
         return False
 

@@ -8,15 +8,17 @@ The format is based on Keep a Changelog and this project aims to follow Semantic
 
 ### Added
 
-- Placeholder for upcoming features.
+- Versioned scheduler config schema with legacy auto-migration.
+- Scheduled weekly CI run for quality and dependency health checks.
 
 ### Changed
 
-- Placeholder for upcoming improvements.
+- Dependency vulnerability audit now blocks CI on failures.
+- Contributor workflow now includes required local pre-commit hooks.
 
 ### Fixed
 
-- Placeholder for upcoming bug fixes.
+- Added explicit migration guidance for the new config schema format.
 
 ## [1.9.5.0] - 2026-03-24
 
