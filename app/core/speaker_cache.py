@@ -1,23 +1,36 @@
+import logging
 import threading
 import time
-import json
+from typing import Optional, Dict, Any
 import xml.etree.ElementTree as ET
 import websocket
+from app.core.constants import (
+    SOUNDTOUCH_WEBSOCKET_PORT,
+    WEBSOCKET_CLOSE_RETRY_DELAY_SECONDS,
+    WEBSOCKET_LOOP_RETRY_DELAY_SECONDS,
+    WEBSOCKET_PING_INTERVAL_SECONDS,
+    WEBSOCKET_PING_TIMEOUT_SECONDS,
+)
 from app.core import status
+
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Global Speaker State Store
 # ---------------------------------------------------------------------------
 # { "Speaker Name": { "status": "...", "source": "...", "volume": 20, "updated_at": ... } }
-_speaker_state = {}
+_speaker_state: Dict[str, Dict[str, Any]] = {}
 _state_lock = threading.Lock()
+_listener_threads: Dict[str, threading.Thread] = {}
+_listener_lock = threading.Lock()
 
-def get_speaker_state(name):
+def get_speaker_state(name: str) -> Optional[Dict[str, Any]]:
     """Return the cached state for a speaker, or None if not cached."""
     with _state_lock:
         return _speaker_state.get(name)
 
-def update_cache(name, data):
+def update_cache(name: str, data: Dict[str, Any]) -> None:
     """Atomically update the cache with new data."""
     with _state_lock:
         if name not in _speaker_state:
@@ -29,7 +42,7 @@ def update_cache(name, data):
 # WebSocket Listener
 # ---------------------------------------------------------------------------
 
-def _on_message(ws, message, speaker_name, ip):
+def _on_message(ws: websocket.WebSocketApp, message: str, speaker_name: str, ip: str) -> None:
     try:
         root = ET.fromstring(message)
         # Notifications arrive inside <updates> tags
@@ -37,40 +50,7 @@ def _on_message(ws, message, speaker_name, ip):
             if update.tag == "nowPlayingUpdated":
                 now_playing = update.find("nowPlaying")
                 if now_playing is not None:
-                    # Reuse the parsing logic from status.py by passing the XML string
-                    # But since status.py expects to make a request, let's just parse it here.
-                    source = now_playing.get('source')
-                    if source == "STANDBY":
-                        update_cache(speaker_name, {"status": "Standby", "source": "STANDBY"})
-                        continue
-
-                    play_status_elem = now_playing.find('playStatus')
-                    play_state = play_status_elem.text if play_status_elem is not None else "UNKNOWN"
-                    
-                    status_map = {
-                        "PLAY_STATE": "Playing",
-                        "PAUSE_STATE": "Paused",
-                        "BUFFERING_STATE": "Buffering",
-                        "STOP_STATE": "Stopped"
-                    }
-                    human_status = status_map.get(play_state, play_state.replace("_STATE", "").capitalize())
-                    
-                    source_display = source.replace("_", " ").title()
-                    if source == "INTERNET_RADIO":
-                        content_item = now_playing.find('ContentItem')
-                        if content_item is not None:
-                            item_name = content_item.findtext('itemName')
-                            if item_name:
-                                source_display = item_name
-
-                    update_cache(speaker_name, {
-                        "status": human_status,
-                        "source": source_display,
-                        "track": now_playing.findtext('track'),
-                        "artist": now_playing.findtext('artist'),
-                        "album": now_playing.findtext('album'),
-                        "raw_state": play_state
-                    })
+                    update_cache(speaker_name, status.parse_now_playing_element(now_playing))
 
             elif update.tag == "volumeUpdated":
                 # volumeUpdated is often an empty tag, need to fetch the real volume
@@ -79,27 +59,30 @@ def _on_message(ws, message, speaker_name, ip):
                     update_cache(speaker_name, {"volume": vol})
                     
     except Exception as e:
-        print(f"[WS Cache] Error processing message from {speaker_name}: {e}")
+        logger.warning("WebSocket message processing failed for %s: %s", speaker_name, e)
 
-def _on_error(ws, error, speaker_name):
-    print(f"[WS Cache] WebSocket error for {speaker_name}: {error}")
+def _on_error(ws: websocket.WebSocketApp, error: Exception, speaker_name: str) -> None:
+    logger.warning("WebSocket error for %s: %s", speaker_name, error)
 
-def _on_close(ws, close_status_code, close_msg, speaker_name):
-    print(f"[WS Cache] WebSocket closed for {speaker_name}. Reconnecting in 5s...")
-    time.sleep(5)
+def _on_close(ws: websocket.WebSocketApp, close_status_code: Optional[int], close_msg: Optional[str], speaker_name: str) -> None:
+    logger.info("WebSocket closed for %s (code=%s, message=%s). Reconnecting in %ss.", speaker_name, close_status_code, close_msg, WEBSOCKET_CLOSE_RETRY_DELAY_SECONDS)
+    time.sleep(WEBSOCKET_CLOSE_RETRY_DELAY_SECONDS)
 
-def listen_to_speaker(name, ip):
+def listen_to_speaker(name: str, ip: str) -> None:
     """Maintain a persistent WebSocket connection to a speaker."""
+    initial_prime = True  # Track if this is the first attempt
     while True:
         try:
-            # 1. Prime the cache with initial HTTP reads
-            print(f"[WS Cache] Priming '{name}' at {ip}...")
-            initial_status = status.get_now_playing(ip)
-            initial_volume = status.get_volume(ip)
-            update_cache(name, {**initial_status, "volume": initial_volume})
+            # 1. Prime the cache with initial HTTP reads on first connection only
+            if initial_prime:
+                logger.info("Priming cached state for '%s' at %s.", name, ip)
+                initial_status = status.get_now_playing(ip)
+                initial_volume = status.get_volume(ip)
+                update_cache(name, {**initial_status, "volume": initial_volume})
+                initial_prime = False
             
             # 2. Open WebSocket
-            ws_url = f"ws://{ip}:8080"
+            ws_url = f"ws://{ip}:{SOUNDTOUCH_WEBSOCKET_PORT}"
             ws = websocket.WebSocketApp(
                 ws_url,
                 subprotocols=["gabbo"],
@@ -107,17 +90,39 @@ def listen_to_speaker(name, ip):
                 on_error=lambda ws, err: _on_error(ws, err, name),
                 on_close=lambda ws, code, msg: _on_close(ws, code, msg, name)
             )
-            print(f"[WS Cache] Connecting to {name} WebSocket...")
-            ws.run_forever()
+            logger.info("Connecting WebSocket listener for '%s'.", name)
+            ws.run_forever(
+                ping_interval=WEBSOCKET_PING_INTERVAL_SECONDS,
+                ping_timeout=WEBSOCKET_PING_TIMEOUT_SECONDS,
+            )
         except Exception as e:
-            print(f"[WS Cache] Loop error for {name}: {e}. Retrying in 10s...")
-            time.sleep(10)
+            logger.warning("WebSocket listener loop error for %s: %s. Retrying in %ss.", name, e, WEBSOCKET_LOOP_RETRY_DELAY_SECONDS)
+            time.sleep(WEBSOCKET_LOOP_RETRY_DELAY_SECONDS)
 
-def start_ws_listeners(devices):
+def start_ws_listeners(devices: list[Dict[str, str]]) -> None:
     """Start a listener thread for each discovered device."""
+    with _listener_lock:
+        existing_names = set(_listener_threads.keys())
+    
     for d in devices:
-        name = d['name']
-        ip = d['ip']
-        t = threading.Thread(target=listen_to_speaker, args=(name, ip), daemon=True)
+        name = d.get('name')
+        ip = d.get('ip')
+        if not name or not ip:
+            continue
+        
+        # Skip if already running a listener for this speaker
+        if name in existing_names:
+            logger.debug("Listener already active for '%s', skipping duplicate.", name)
+            continue
+        
+        # Atomically register and start the listener
+        with _listener_lock:
+            if name in _listener_threads:
+                # Double-check in case another thread started one
+                logger.debug("Listener already registered for '%s', skipping.", name)
+                continue
+            t = threading.Thread(target=listen_to_speaker, args=(name, ip), daemon=True)
+            _listener_threads[name] = t
+        
         t.start()
-        print(f"[WS Cache] Started listener for '{name}'")
+        logger.info("Started WebSocket listener for '%s'.", name)

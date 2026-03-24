@@ -11,8 +11,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the structured application package
 COPY app/ ./app/
-COPY app/templates/ ./app/templates/
-COPY app/static/ ./app/static/
 
 # Forces python to immediately flush logs to stdout so they show in Docker logs
 ENV PYTHONUNBUFFERED=1

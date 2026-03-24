@@ -1,20 +1,166 @@
-from flask import Blueprint, jsonify, request, render_template, current_app
+import re
+import threading
+from typing import Optional, Dict, Any, Tuple, Union
+from flask import Blueprint, jsonify, request, render_template, current_app, send_from_directory, make_response
+from app.core.constants import (
+  DEFAULT_FADE_IN_DURATION_SECONDS,
+  DEFAULT_FADE_OUT_DURATION_SECONDS,
+  DEFAULT_PRESET,
+  DEFAULT_VOLUME,
+)
 from app.core import discovery, status, control, speaker_cache
 from app.scheduler import jobs
 
 api_bp = Blueprint('api', __name__)
+VALID_DAYS = {
+  "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"
+}
+TIME_PATTERN = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+
+
+def _coerce_int(value: Any, field_name: str, errors: Dict[str, str], minimum: Optional[int] = None, maximum: Optional[int] = None) -> Optional[int]:
+  if isinstance(value, bool):
+    errors[field_name] = f"'{field_name}' must be an integer."
+    return None
+  try:
+    coerced = int(value)
+  except (TypeError, ValueError):
+    errors[field_name] = f"'{field_name}' must be an integer."
+    return None
+
+  if minimum is not None and coerced < minimum:
+    errors[field_name] = f"'{field_name}' must be between {minimum} and {maximum}."
+    return None
+  if maximum is not None and coerced > maximum:
+    errors[field_name] = f"'{field_name}' must be between {minimum} and {maximum}."
+    return None
+  return coerced
+
+
+def _coerce_non_negative_number(value: Any, field_name: str, errors: Dict[str, str], default_value: Union[int, float]) -> Optional[Union[int, float]]:
+  if value is None:
+    return default_value
+  if isinstance(value, bool):
+    errors[field_name] = f"'{field_name}' must be a number."
+    return None
+  try:
+    coerced = float(value)
+  except (TypeError, ValueError):
+    errors[field_name] = f"'{field_name}' must be a number."
+    return None
+  if coerced < 0:
+    errors[field_name] = f"'{field_name}' must be greater than or equal to 0."
+    return None
+  if coerced.is_integer():
+    return int(coerced)
+  return coerced
+
+
+def _validate_schedule_payload(data: Any) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, str]]]:
+  if not isinstance(data, dict):
+    return None, {"body": "Expected a JSON object."}
+
+  errors = {}
+  normalized = {}
+
+  name = data.get("name")
+  if not isinstance(name, str) or not name.strip():
+    errors["name"] = "'name' is required."
+  else:
+    normalized["name"] = name.strip()
+
+  previous_name = data.get("previous_name")
+  if previous_name in (None, ""):
+    normalized["previous_name"] = None
+  elif not isinstance(previous_name, str) or not previous_name.strip():
+    errors["previous_name"] = "'previous_name' must be a non-empty string when provided."
+  else:
+    normalized["previous_name"] = previous_name.strip()
+
+  days = data.get("days")
+  if not isinstance(days, list) or not days:
+    errors["days"] = "'days' must be a non-empty array."
+  else:
+    normalized_days = []
+    for day in days:
+      if not isinstance(day, str):
+        errors["days"] = "'days' must contain valid weekday names."
+        break
+      normalized_day = day.strip().lower()
+      if normalized_day not in VALID_DAYS:
+        errors["days"] = "'days' must contain valid weekday names."
+        break
+      normalized_days.append(normalized_day)
+    if "days" not in errors:
+      normalized["days"] = normalized_days
+
+  for field_name in ("on_time", "off_time"):
+    raw_value = data.get(field_name)
+    if not isinstance(raw_value, str) or not TIME_PATTERN.fullmatch(raw_value.strip()):
+      errors[field_name] = f"'{field_name}' must use HH:MM 24-hour format."
+    else:
+      normalized[field_name] = raw_value.strip()
+
+  source = data.get("source")
+  if source in ("", None):
+    source = None
+  elif not isinstance(source, str):
+    errors["source"] = "'source' must be a string."
+    source = None
+  else:
+    source = source.strip().upper()
+    if source != "AUX":
+      errors["source"] = "'source' must be 'AUX' when provided."
+      source = None
+
+  preset = data.get("preset")
+  if preset in ("", None):
+    preset = None
+  else:
+    preset = _coerce_int(preset, "preset", errors, minimum=1, maximum=6)
+
+  if source is not None and preset is not None:
+    errors["source"] = "'source' and 'preset' are mutually exclusive."
+
+  if source is None and preset is None:
+    preset = DEFAULT_PRESET
+
+  normalized["source"] = source
+  normalized["preset"] = None if source is not None else preset
+
+  normalized["volume"] = _coerce_int(data.get("volume", DEFAULT_VOLUME), "volume", errors, minimum=0, maximum=100)
+  normalized["fade_in_duration"] = _coerce_non_negative_number(
+    data.get("fade_in_duration", DEFAULT_FADE_IN_DURATION_SECONDS), "fade_in_duration", errors, DEFAULT_FADE_IN_DURATION_SECONDS
+  )
+  normalized["fade_out_duration"] = _coerce_non_negative_number(
+    data.get("fade_out_duration", DEFAULT_FADE_OUT_DURATION_SECONDS), "fade_out_duration", errors, DEFAULT_FADE_OUT_DURATION_SECONDS
+  )
+
+  paused = data.get("paused", False)
+  if not isinstance(paused, bool):
+    errors["paused"] = "'paused' must be a boolean."
+  else:
+    normalized["paused"] = paused
+
+  if errors:
+    return None, errors
+  return normalized, None
 
 @api_bp.route("/", methods=["GET"])
-def ui_root():
+def ui_root() -> Tuple[Any, int, Dict[str, str]]:
     """Serve the Web UI single-page application."""
-    return render_template("index.html")
+    response = make_response(render_template("index.html"))
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 @api_bp.route("/sw.js")
-def serve_sw():
-    return current_app.send_static_file('sw.js')
+def serve_sw() -> Any:
+    return send_from_directory(current_app.static_folder, "sw.js")
 
 @api_bp.route("/api/info", methods=["GET"])
-def api_root():
+def api_root() -> Any:
     """
     Service Info Endpoint
     Returns general metadata about the service.
@@ -26,7 +172,7 @@ def api_root():
     return jsonify({"service": "SoundTouch-Service", "config": jobs.get_current_config()})
 
 @api_bp.route("/api/schedules", methods=["GET"])
-def api_get_schedules():
+def api_get_schedules() -> Any:
     """
     Get all schedules
     Retrieve the current schedules configured for all SoundTouch speakers.
@@ -38,7 +184,7 @@ def api_get_schedules():
     return jsonify(jobs.get_current_config())
 
 @api_bp.route("/api/<speaker_name>/schedules", methods=["POST"])
-def api_add_schedule(speaker_name):
+def api_add_schedule(speaker_name: str) -> Tuple[Any, int]:
     """
     Add or Update a Schedule
     Push a new schedule or update an existing schedule by name for the given speaker. 
@@ -82,21 +228,23 @@ def api_add_schedule(speaker_name):
       202:
         description: Schedule update is accepted and queued for IO processing.
     """
-    data = request.json
-    if not data or "name" not in data:
-        return jsonify({"error": "Missing schedule 'name' in request body."}), 400
+    data = request.get_json(silent=True)
+    normalized, errors = _validate_schedule_payload(data)
+    if errors:
+      return jsonify({"errors": errors}), 400
         
     jobs.config_queue.put({
         "action": "add_update",
         "speaker": speaker_name,
-        "schedule_name": data["name"],
-        "data": data
+      "schedule_name": normalized["name"],
+      "previous_name": normalized.pop("previous_name", None),
+      "data": normalized
     })
     
-    return jsonify({"message": f"Schedule '{data['name']}' queued for processing on '{speaker_name}'"}), 202
+    return jsonify({"message": f"Schedule '{normalized['name']}' queued for processing on '{speaker_name}'"}), 202
 
 @api_bp.route("/api/<speaker_name>/schedules/<schedule_name>", methods=["DELETE"])
-def api_delete_schedule(speaker_name, schedule_name):
+def api_delete_schedule(speaker_name: str, schedule_name: str) -> Tuple[Any, int]:
     """
     Delete a Schedule
     Remove a schedule from a specific speaker by its exact name.
@@ -126,7 +274,7 @@ def api_delete_schedule(speaker_name, schedule_name):
 
 
 @api_bp.route("/api/<speaker_name>/schedules/<schedule_name>/pause", methods=["PATCH"])
-def api_pause_schedule(speaker_name, schedule_name):
+def api_pause_schedule(speaker_name: str, schedule_name: str) -> Tuple[Any, int]:
     """
     Pause a Schedule
     Temporarily pause a schedule by name. The schedule is kept but skipped by the scheduler until resumed.
@@ -166,7 +314,7 @@ def api_pause_schedule(speaker_name, schedule_name):
 
 
 @api_bp.route("/api/<speaker_name>/schedules/<schedule_name>/resume", methods=["PATCH"])
-def api_resume_schedule(speaker_name, schedule_name):
+def api_resume_schedule(speaker_name: str, schedule_name: str) -> Tuple[Any, int]:
     """
     Resume a Schedule
     Resume a previously paused schedule so the scheduler will execute it again.
@@ -206,7 +354,7 @@ def api_resume_schedule(speaker_name, schedule_name):
 
 
 @api_bp.route("/api/<speaker_name>/schedules/<schedule_name>/trigger", methods=["POST"])
-def api_trigger_schedule(speaker_name, schedule_name):
+def api_trigger_schedule(speaker_name: str, schedule_name: str) -> Tuple[Any, int]:
     """
     Manually Trigger a Schedule
     Immediately execute the 'ON' sequence for a specific schedule.
@@ -232,15 +380,14 @@ def api_trigger_schedule(speaker_name, schedule_name):
     if target is None:
         return jsonify({"error": f"Schedule '{schedule_name}' not found for speaker '{speaker_name}'"}), 404
 
-    import threading
     threading.Thread(
         target=jobs.auto_on_job,
         args=(
             speaker_name,
-            target.get("preset", 1),
-            target.get("volume", 20),
+            target.get("preset", DEFAULT_PRESET),
+            target.get("volume", DEFAULT_VOLUME),
             target.get("source"),
-            target.get("fade_in_duration", 300),
+            target.get("fade_in_duration", DEFAULT_FADE_IN_DURATION_SECONDS),
             True  # force=True
         ),
         daemon=True
@@ -250,7 +397,7 @@ def api_trigger_schedule(speaker_name, schedule_name):
 
 
 @api_bp.route("/api/discover", methods=["GET"])
-def api_discover():
+def api_discover() -> Any:
     """
     Discover SoundTouch Speakers
     Return all cached speakers from the background mDNS discovery. Force a cache refresh with ?refresh=true.
@@ -259,13 +406,20 @@ def api_discover():
       200:
         description: A list of discovered devices containing their names and IP addresses.
     """
-    if request.args.get("refresh", "").lower() == "true":
-        discovery.refresh_cache()
+    force_refresh = request.args.get("refresh", "").lower() == "true"
+    if force_refresh:
+      discovery.safe_refresh_cache()
+
     devices = discovery.get_all_cached_devices()
+    if not devices and not force_refresh:
+      # Best-effort warmup for first page load when background scan is not ready yet.
+      discovery.safe_refresh_cache()
+      devices = discovery.get_all_cached_devices()
+
     return jsonify(devices)
 
 @api_bp.route("/api/<speaker_name>/status", methods=["GET"])
-def api_status(speaker_name):
+def api_status(speaker_name: str) -> Tuple[Any, int]:
     """
     Get Speaker Status
     Query a device to see what it is currently playing or if it is in STANDBY.
@@ -297,7 +451,7 @@ def api_status(speaker_name):
     return jsonify({"speaker": speaker_name, "ip": ip, "volume": volume, **status_data})
 
 @api_bp.route("/api/<speaker_name>/power", methods=["POST"])
-def api_power(speaker_name):
+def api_power(speaker_name: str) -> Tuple[Any, int]:
     """
     Toggle Speaker Power
     Toggles the power state of the speaker. Note that SoundTouch APIs only offer a power toggle.
@@ -321,7 +475,7 @@ def api_power(speaker_name):
     return jsonify({"message": f"Sent POWER toggle signal to {speaker_name} at {ip}"})
 
 @api_bp.route("/api/<speaker_name>/preset/<int:preset_id>", methods=["POST"])
-def api_preset(speaker_name, preset_id):
+def api_preset(speaker_name: str, preset_id: int) -> Tuple[Any, int]:
     """
     Play Speaker Preset
     Triggers one of the 6 numeric preset shortcut buttons on the speaker.
@@ -346,11 +500,13 @@ def api_preset(speaker_name, preset_id):
     ip = discovery.get_device_ip(speaker_name)
     if not ip:
         return jsonify({"error": "Speaker not found"}), 404
+    if not 1 <= preset_id <= 6:
+      return jsonify({"error": "Preset must be between 1 and 6."}), 400
     control.play_preset(ip, preset_num=preset_id)
     return jsonify({"message": f"Playing PRESET_{preset_id} on {speaker_name} at {ip}"})
 
 @api_bp.route("/api/<speaker_name>/volume", methods=["POST"])
-def api_volume(speaker_name):
+def api_volume(speaker_name: str) -> Tuple[Any, int]:
     """
     Set Speaker Volume
     Sets the volume level from 0 to 100 on the specified network speaker.
@@ -376,8 +532,16 @@ def api_volume(speaker_name):
       404:
         description: Speaker not found on the local network.
     """
-    data = request.json
-    vol = data.get("volume", 20) if data else 20
+    data = request.get_json(silent=True)
+    if request.is_json and data is None and request.content_length not in (None, 0):
+      return jsonify({"error": "Malformed JSON body."}), 400
+    if data is not None and not isinstance(data, dict):
+      return jsonify({"error": "Expected a JSON object."}), 400
+
+    vol = _coerce_int((data or {}).get("volume", DEFAULT_VOLUME), "volume", {}, minimum=0, maximum=100)
+    if vol is None:
+      return jsonify({"error": "Volume must be between 0 and 100."}), 400
+
     ip = discovery.get_device_ip(speaker_name)
     if not ip:
         return jsonify({"error": "Speaker not found"}), 404

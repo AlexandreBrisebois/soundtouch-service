@@ -70,7 +70,7 @@ if __name__ == "__main__":
         send_key(ip, "POWER")
 
     print("\n--- Testing Local Flask API ---")
-    port = int(os.environ.get("PORT", 5005))
+    port = int(os.environ.get("PORT", 9001))
     base_url = f"http://localhost:{port}"
     try:
         req = requests.get(f"{base_url}/api/schedules", timeout=2)

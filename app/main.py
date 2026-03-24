@@ -1,3 +1,4 @@
+import logging
 import os
 from flask import Flask
 from flasgger import Swagger
@@ -5,7 +6,18 @@ from app.api.routes import api_bp
 from app.core import discovery, speaker_cache
 from app.scheduler import jobs
 
+
+def configure_logging():
+    root_logger = logging.getLogger()
+    if root_logger.handlers:
+        return
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s [%(name)s] %(message)s"
+    )
+
 def create_app():
+    configure_logging()
     app_instance = Flask(
         __name__,
         template_folder=os.path.join(os.path.dirname(__file__), "templates"),
@@ -27,11 +39,8 @@ def create_app():
     # Start the background dynamic scheduler as a daemon thread
     jobs.start_daemon()
     
-    # Start the device IP cache (one mDNS scan now, refresh every 5 min)
-    discovery.start_device_cache()
-    
-    # Start WebSocket listeners for each speaker found in the cache
-    speaker_cache.start_ws_listeners(discovery.get_all_cached_devices())
+    # Refresh the discovery cache immediately and attach listeners for newly found speakers.
+    discovery.start_device_cache(on_refresh=speaker_cache.start_ws_listeners)
     
     return app_instance
 

@@ -124,9 +124,11 @@ Wisp is built to solve common local network audio delays:
 Wisp provides a full REST API for advanced users and smart home integrations like Home Assistant. Explore the documentation at `http://<your-ip>:9001/apidocs`.
 
 **Key Endpoints:**
-*   `GET /api/speakers` — List all speakers and their live status.
+*   `GET /api/discover` — List discovered speakers from the cached discovery layer.
 *   `POST /api/<speaker>/schedules/<name>/trigger` — Start a routine manually.
 *   `PATCH /api/<speaker>/schedules/<name>/pause` — Toggle holiday/sick-day mode.
+
+The real-time speaker status view also depends on access to the speaker WebSocket endpoint on port `8080`.
 
 ---
 

@@ -1,26 +1,36 @@
+import logging
 import time
 import socket
 import threading
+from typing import Optional, List, Dict, Any, Callable
 from zeroconf import ServiceBrowser, Zeroconf
+from app.core.constants import (
+    DISCOVERY_REFRESH_INTERVAL_SECONDS,
+    DISCOVERY_REFRESH_TIMEOUT_SECONDS,
+    DISCOVERY_SCAN_TIMEOUT_SECONDS,
+)
+
+
+logger = logging.getLogger(__name__)
 
 class SoundTouchListener:
-    def __init__(self):
-        self.devices = []
+    def __init__(self) -> None:
+        self.devices: List[Dict[str, str]] = []
 
-    def remove_service(self, zeroconf, type, name):
+    def remove_service(self, zeroconf: Zeroconf, type: str, name: str) -> None:
         pass
 
-    def add_service(self, zeroconf, type, name):
+    def add_service(self, zeroconf: Zeroconf, type: str, name: str) -> None:
         info = zeroconf.get_service_info(type, name)
         if info:
             clean_name = name.replace("._soundtouch._tcp.local.", "")
             ip = socket.inet_ntoa(info.addresses[0])
             self.devices.append({"name": clean_name, "ip": ip})
 
-    def update_service(self, zeroconf, type, name):
+    def update_service(self, zeroconf: Zeroconf, type: str, name: str) -> None:
         pass
 
-def discover_systems(timeout=5):
+def discover_systems(timeout: float = DISCOVERY_SCAN_TIMEOUT_SECONDS) -> List[Dict[str, str]]:
     """
     Scans the local network for Bose SoundTouch devices using mDNS.
     Returns a list of dictionaries containing device names and IP addresses.
@@ -33,25 +43,36 @@ def discover_systems(timeout=5):
     return listener.devices
 
 if __name__ == "__main__":
-    print("Discovering SoundTouch devices...")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
+    logger.info("Discovering SoundTouch devices...")
     devices = discover_systems()
     for d in devices:
-        print(f"Found '{d['name']}' at {d['ip']}")
+        logger.info("Found '%s' at %s", d['name'], d['ip'])
 
 # ---------------------------------------------------------------------------
 # Device IP Cache
 # ---------------------------------------------------------------------------
-_device_cache: dict = {}       # name → IP
+_device_cache: Dict[str, str] = {}       # name → IP
 _cache_lock = threading.Lock()
 
-def refresh_cache():
+def refresh_cache() -> None:
     """Run a single mDNS scan and update the cache atomically."""
-    devices = discover_systems(timeout=3)
+    devices = discover_systems(timeout=DISCOVERY_REFRESH_TIMEOUT_SECONDS)
     new_cache = {d["name"]: d["ip"] for d in devices}
     with _cache_lock:
         _device_cache.clear()
         _device_cache.update(new_cache)
-    print(f"[Discovery] Cache refreshed: {list(new_cache.keys())}")
+    logger.info("Discovery cache refreshed with speakers: %s", list(new_cache.keys()))
+
+
+def safe_refresh_cache() -> bool:
+    """Best-effort cache refresh that never raises to callers/threads."""
+    try:
+        refresh_cache()
+        return True
+    except Exception as exc:
+        logger.warning("Discovery cache refresh failed: %s", exc)
+        return False
 
 def get_device_ip(name: str):
     """Instant O(1) lookup from cache. Falls back to a one-off scan on miss."""
@@ -60,25 +81,37 @@ def get_device_ip(name: str):
     if ip is not None:
         return ip
     # Cache miss — run a single scan, then retry
-    print(f"[Discovery] Cache miss for '{name}', running fallback scan...")
-    refresh_cache()
+    logger.info("Discovery cache miss for '%s'; running fallback scan.", name)
+    if not safe_refresh_cache():
+        return None
     with _cache_lock:
         return _device_cache.get(name)
 
-def get_all_cached_devices():
+def get_all_cached_devices() -> List[Dict[str, str]]:
     """Return a list of dicts matching the discover_systems() format."""
     with _cache_lock:
         return [{"name": n, "ip": ip} for n, ip in _device_cache.items()]
 
-def _cache_refresh_loop():
+def _cache_refresh_loop(on_refresh: Optional[Callable[[List[Dict[str, str]]], None]] = None, delay_first: bool = False) -> None:
     """Background loop: refresh cache every 5 minutes."""
+    if delay_first:
+        time.sleep(DISCOVERY_REFRESH_INTERVAL_SECONDS)
     while True:
-        refresh_cache()
-        time.sleep(300)
+        refreshed = safe_refresh_cache()
+        if refreshed and on_refresh is not None:
+            on_refresh(get_all_cached_devices())
+        time.sleep(DISCOVERY_REFRESH_INTERVAL_SECONDS)
 
-def start_device_cache():
+def start_device_cache(on_refresh: Optional[Callable[[List[Dict[str, str]]], None]] = None) -> None:
     """Start the background cache refresh thread. Call once at startup."""
-    refresh_cache()  # prime immediately
-    t = threading.Thread(target=_cache_refresh_loop, daemon=True)
+    initial_refresh_ok = safe_refresh_cache()
+    if initial_refresh_ok and on_refresh is not None:
+        on_refresh(get_all_cached_devices())
+
+    t = threading.Thread(
+        target=_cache_refresh_loop,
+        kwargs={"on_refresh": on_refresh, "delay_first": initial_refresh_ok},
+        daemon=True
+    )
     t.start()
-    print("[Discovery] Background cache refresh thread started.")
+    logger.info("Background discovery cache refresh thread started.")
