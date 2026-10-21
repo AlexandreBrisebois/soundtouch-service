@@ -22,8 +22,12 @@ follow_imports = "skip"
 files = [
   "app/core/http_client.py",
   "app/core/control.py",
+  "app/core/library.py",
+  "app/core/favorites.py",
+  "app/api/favorites.py",
   "app/core/status.py",
   "app/core/discovery.py",
   "app/api/routes.py",
   "app/scheduler/jobs.py",
 ]
+

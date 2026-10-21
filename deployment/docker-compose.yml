@@ -13,6 +13,9 @@ services:
     environment:
       # API Port configuration
       - PORT=9001
+      - FAVORITES_FILE=/workspace/state/favorites.json
+      # Optional radio metadata origin, stable and reachable by speakers:
+      # - WISP_BASE_URL=http://wisp.lan:9001
 
       # VERY IMPORTANT: Set your exact time zone so the Python scheduler 
       # triggers your config.json "HH:MM" at the correct local time instead of UTC.
@@ -22,5 +25,8 @@ services:
       # Maps the configuration file into the container. 
       # You can edit this file in Synology File Station and the schedule will update instantly.
       - ./config.json:/workspace/config.json
+      # Directory mount supports atomic favorites.json replacement.
+      - ./state:/workspace/state
 
     restart: unless-stopped
+

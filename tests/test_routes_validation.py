@@ -457,3 +457,81 @@ def test_manual_volume_rejects_nonfinite_input_without_server_error(monkeypatch,
     monkeypatch.setattr("app.api.routes.discovery.get_device_ip", lambda *_a: pytest.fail("Invalid input must not query LAN"))
     response = client.post("/api/Living Room/volume", json={"volume": volume})
     assert response.status_code == 400
+
+@pytest.mark.parametrize('explicit', [True, False])
+def test_saved_favorite_canonicalizes_slot_and_preserves_legacy_edit(monkeypatch, explicit):
+    favorite_id = 'a' * 32
+    queued = []
+    monkeypatch.setattr('app.api.routes.jobs.config_queue.put', queued.append)
+    monkeypatch.setattr('app.api.routes.jobs.get_current_config', lambda: {'Room': [{'name': 'Morning', 'favorite_id': favorite_id}]})
+    monkeypatch.setattr('app.api.routes.favorites.schedule_binding', lambda id, speaker: {'speaker_id': 'ABC', 'slot': 3} if id == favorite_id and speaker == 'Room' else None)
+    payload = {'name': 'Morning', 'days': ['monday'], 'on_time': '07:00', 'off_time': '08:00', 'preset': 1, 'volume': 10}
+    if explicit:
+        payload['favorite_id'] = favorite_id
+    result = create_test_app().test_client().post('/api/Room/schedules', json=payload)
+    assert result.status_code == 202
+    assert queued[0]['data']['favorite_id'] == favorite_id
+    assert queued[0]['data']['speaker_id'] == 'ABC'
+    assert queued[0]['data']['preset'] == 3
+
+
+def test_explicit_numbered_preset_removes_favorite_binding(monkeypatch):
+    queued = []
+    monkeypatch.setattr('app.api.routes.jobs.config_queue.put', queued.append)
+    monkeypatch.setattr('app.api.routes.jobs.get_current_config', lambda: {'Room': [{'name': 'Morning', 'favorite_id': 'a' * 32}]})
+    result = create_test_app().test_client().post('/api/Room/schedules', json={'name': 'Morning', 'days': ['monday'], 'on_time': '07:00', 'off_time': '08:00', 'preset': 1, 'volume': 10, 'favorite_id': ''})
+    assert result.status_code == 202
+    assert 'favorite_id' not in queued[0]['data']
+
+@pytest.mark.parametrize('legacy', [False, True])
+def test_station_schedule_keeps_archived_binding_and_device_pin(monkeypatch, legacy):
+    from app.core import favorites
+    id = 'b' * 32
+    queued, reads, devices = [], [], []
+    monkeypatch.setattr('app.api.routes.jobs.config_queue.put', queued.append)
+    monkeypatch.setattr('app.api.routes.jobs.get_current_config', lambda: {'Room': [{'name': 'Morning', 'station_id': id, 'speaker_id': 'ABC'}]})
+    monkeypatch.setattr(favorites, 'station', lambda key, **kw: reads.append((key, kw)) or {'id': id})
+    monkeypatch.setattr(favorites, 'device', lambda name, pin: devices.append((name, pin)) or {'device_id': pin})
+    payload = {'name': 'Morning', 'days': ['monday'], 'on_time': '07:00', 'off_time': '08:00', 'volume': 10, 'preset': None, 'source': None}
+    if not legacy:
+        payload['station_id'] = id
+    response = create_test_app().test_client().post('/api/Room/schedules', json=payload)
+    assert response.status_code == 202
+    assert reads == [(id, {'allow_removed': True})]
+    assert devices == [('Room', 'ABC')]
+    assert queued[0]['data']['station_id'] == id
+    assert queued[0]['data']['preset'] is None and queued[0]['data']['source'] is None
+
+
+def test_station_schedule_rejects_same_name_replacement_speaker(monkeypatch):
+    from app.core import favorites
+    id = 'b' * 32
+    queued = []
+    monkeypatch.setattr('app.api.routes.jobs.config_queue.put', queued.append)
+    monkeypatch.setattr('app.api.routes.jobs.get_current_config', lambda: {'Room': [{'name': 'Morning', 'station_id': id, 'speaker_id': 'ABC'}]})
+    monkeypatch.setattr(favorites, 'station', lambda *args, **kwargs: {})
+    def resolve(name, pin):
+        assert pin == 'ABC'
+        raise favorites.FavoriteError('Speaker identity unavailable')
+    monkeypatch.setattr(favorites, 'device', resolve)
+    response = create_test_app().test_client().post('/api/Room/schedules', json={'name': 'Morning', 'days': ['monday'], 'on_time': '07:00', 'off_time': '08:00', 'volume': 10, 'station_id': id})
+    assert response.status_code == 400
+    assert not queued
+
+
+def test_new_station_schedule_needs_no_preset_and_rejects_dual_binding(monkeypatch):
+    from app.core import favorites
+    id = 'b' * 32
+    queued, reads = [], []
+    monkeypatch.setattr('app.api.routes.jobs.config_queue.put', queued.append)
+    monkeypatch.setattr('app.api.routes.jobs.get_current_config', lambda: {})
+    monkeypatch.setattr(favorites, 'station', lambda key, **kw: reads.append((key, kw)) or {'id': id})
+    monkeypatch.setattr(favorites, 'device', lambda name, pin: {'device_id': 'ABC'})
+    payload = {'name': 'Morning', 'days': ['monday'], 'on_time': '07:00', 'off_time': '08:00', 'volume': 10, 'station_id': id, 'preset': None, 'source': None}
+    response = create_test_app().test_client().post('/api/Room/schedules', json=payload)
+    assert response.status_code == 202
+    assert reads == [(id, {'allow_removed': False})]
+    assert queued[0]['data']['station_id'] == id
+    assert queued[0]['data']['preset'] is None
+    payload['favorite_id'] = 'a' * 32
+    assert create_test_app().test_client().post('/api/Room/schedules', json=payload).status_code == 400

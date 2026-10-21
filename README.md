@@ -207,3 +207,7 @@ The existing speaker view distinguishes queued/starting runs from speaker-report
 shows the next run in the server's timezone, and can cancel pending automation/fades.
 See [the playback reliability contract](docs/playback-reliability.md) for safe-volume sequencing,
 manual priority, optional stable speaker IDs, failure behavior and remaining hardware checks.
+
+### Native presets (draft qualification)
+
+Keep an independent Stations library with Add, Remove, Play quietly and Assign to preset. Browse a NAS library already registered on a speaker, review a physical-button assignment, and bind a routine to that favorite. Compatible radio sources can use a Wisp-hosted metadata descriptor. Hardware qualification is still required; readiness and readback do not prove audible playback. See [setup, safety and qualification](docs/native-presets.md) before changing an existing button.

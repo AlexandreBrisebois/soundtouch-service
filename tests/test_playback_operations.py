@@ -347,3 +347,120 @@ def test_scheduled_on_stays_polite_if_manual_audio_starts_during_preset_read(dev
     playback.run_on(op, 1, 10)
     assert not device[2]
     assert playback.last('Room')['state'] == 'skipped'
+
+@pytest.mark.parametrize('change', ['slot', 'speaker_id', 'state', 'content'])
+def test_favorite_drift_never_changes_volume_or_plays(device, monkeypatch, change):
+    from app.core import favorites, library
+    saved = {'kind': 'nas', 'state': 'readback_matched', 'speaker_id': 'ABC', 'slot': 1,
+             'content': {'source': 'STORED_MUSIC', 'sourceAccount': 'server', 'location': 'album/1'}}
+    saved[change] = {'source': 'STORED_MUSIC', 'sourceAccount': 'server', 'location': 'other'} if change == 'content' else 'changed'
+    monkeypatch.setattr(favorites, 'get', lambda _: saved)
+    monkeypatch.setattr(library, 'read_sources', lambda _: [])
+    op = playback.begin('Room', 'Morning')
+    playback.run_on(op, preset=1, volume=3, favorite_id='favorite')
+    assert not device[2]
+    assert playback.last('Room')['reason'] == 'favorite_preset_changed'
+
+
+def test_ready_native_favorite_uses_existing_quiet_playback(device, monkeypatch):
+    from app.core import favorites, library
+    monkeypatch.setattr(favorites, 'get', lambda _: {
+        'kind': 'nas', 'state': 'readback_matched', 'speaker_id': 'ABC', 'slot': 1,
+        'content': {'source': 'STORED_MUSIC', 'type': 'dir', 'sourceAccount': 'server', 'location': 'album/1'}})
+    monkeypatch.setattr(library, 'read_sources', lambda _: [{'source': 'STORED_MUSIC', 'account': 'server', 'ready': True}])
+    op = playback.begin('Room', 'Morning')
+    playback.run_on(op, preset=1, volume=3, fade_in_duration=0, favorite_id='favorite')
+    assert playback.last('Room')['state'] == 'playing'
+    assert device[2][0] == ('volume', 0)
+
+
+def test_favorite_unready_source_never_selects(device, monkeypatch):
+    from app.core import favorites, library
+    monkeypatch.setattr(favorites, 'get', lambda _: {
+        'kind': 'nas', 'state': 'readback_matched', 'speaker_id': 'ABC', 'slot': 1,
+        'content': {'source': 'STORED_MUSIC', 'sourceAccount': 'server', 'location': 'album/1'}})
+    monkeypatch.setattr(library, 'read_sources', lambda _: [{'source': 'STORED_MUSIC', 'account': 'server', 'ready': False}])
+    op = playback.begin('Room', 'Morning')
+    playback.run_on(op, preset=1, volume=3, favorite_id='favorite')
+    assert not device[2]
+    assert playback.last('Room')['reason'] == 'favorite_source_unavailable'
+
+
+@pytest.mark.parametrize('scheduled', [False, True])
+def test_direct_station_quiets_then_selects_without_preset_write(device, monkeypatch, scheduled):
+    from app.core import favorites, library
+    content = {'source': 'LOCAL_INTERNET_RADIO', 'type': 'stationurl', 'location': 'http://wisp/api/stations/id/stream', 'name': 'Radio', 'presetable': True}
+    archive_access = []
+    monkeypatch.setattr(favorites, 'station_content', lambda _, **kwargs: archive_access.append(kwargs['allow_removed']) or content)
+    monkeypatch.setattr(favorites, 'capabilities', lambda _: {'/select'})
+    monkeypatch.setattr(library, 'read_sources', lambda _: [{'source': 'LOCAL_INTERNET_RADIO', 'ready': True}])
+    def select(ip, selected, **kwargs):
+        device[2].append(('select', selected))
+        device[0].update(status='Playing', source_type='LOCAL_INTERNET_RADIO', content_identity={key: content[key] for key in ('source', 'type', 'location')})
+        return True
+    monkeypatch.setattr(playback.control, 'select_content', select)
+    op = playback.begin('Room', 'Station test', 'ABC')
+    playback.run_on(op, None, 5, fade_in_duration=0, force=not scheduled, station_id='id', allow_archived_station=scheduled)
+    assert archive_access == [scheduled]
+    assert playback.last('Room')['state'] == 'playing'
+    assert device[2][0] == ('volume', 0)
+    assert device[2][1] == ('select', content)
+    assert not any(call[0] == 'preset' for call in device[2])
+
+
+@pytest.mark.parametrize('reason', ['removed', 'source', 'capability'])
+def test_direct_station_unready_never_changes_audio(device, monkeypatch, reason):
+    from app.core import favorites, library
+    def get(_, **kwargs):
+        if reason == 'removed':
+            raise ValueError('removed')
+        return {'source': 'LOCAL_INTERNET_RADIO', 'location': 'http://wisp/station'}
+    monkeypatch.setattr(favorites, 'station_content', get)
+    monkeypatch.setattr(favorites, 'capabilities', lambda _: set() if reason == 'capability' else {'/select'})
+    monkeypatch.setattr(library, 'read_sources', lambda _: [{'source': 'LOCAL_INTERNET_RADIO', 'ready': reason != 'source'}])
+    op = playback.begin('Room', 'Station test', 'ABC')
+    playback.run_on(op, None, 5, force=True, station_id='id')
+    assert playback.last('Room')['state'] == 'unknown'
+    assert not device[2]
+
+
+def test_seventh_station_schedule_roundtrip_plays_without_any_preset(device, monkeypatch, tmp_path):
+    import json
+    from flask import Flask
+    from app.api.routes import api_bp
+    from app.core import favorites, library
+    from app.scheduler import jobs
+    monkeypatch.setenv('FAVORITES_FILE', str(tmp_path / 'favorites.json'))
+    monkeypatch.setenv('WISP_BASE_URL', 'http://wisp.local:9001')
+    saved = [favorites.add_station(f'Radio {index}', f'https://radio.example/{index}') for index in range(7)]
+    chosen = saved[-1]
+    mutations = []
+    monkeypatch.setattr(jobs, 'get_current_config', lambda: {})
+    monkeypatch.setattr(jobs.config_queue, 'put', mutations.append)
+    app = Flask(__name__)
+    app.register_blueprint(api_bp)
+    response = app.test_client().post('/api/Room/schedules', json={
+        'name': 'Seventh radio', 'station_id': chosen['id'], 'preset': None, 'source': None,
+        'days': ['monday'], 'on_time': '07:00', 'off_time': '08:00', 'volume': 9, 'fade_in_duration': 0})
+    assert response.status_code == 202
+    config = tmp_path / 'saved-config.json'
+    config.write_text(json.dumps(mutations[0]['data']))
+    schedule = jobs._normalize_schedule(json.loads(config.read_text()), 'Room', 0)
+    favorites.remove_station(chosen['id'])
+    assert len(favorites.stations()) == 6
+    monkeypatch.setattr(favorites, 'capabilities', lambda _: {'/select'})
+    monkeypatch.setattr(library, 'read_sources', lambda _: [{'source': 'LOCAL_INTERNET_RADIO', 'ready': True}])
+    def select(ip, content, **kwargs):
+        device[2].append(('select', content['location']))
+        device[0].update(status='Playing', source_type='LOCAL_INTERNET_RADIO',
+                         content_identity={key: content[key] for key in ('source', 'type', 'location')})
+        return True
+    monkeypatch.setattr(playback.control, 'select_content', select)
+    monkeypatch.setattr(jobs, 'BACKGROUND_WORKER_POOL', object())
+    monkeypatch.setattr(jobs, 'submit_background_task', lambda fn, *args: fn(*args) or True)
+    jobs.queue_on('Room', schedule)
+    assert playback.last('Room')['state'] == 'playing'
+    assert device[2][0] == ('volume', 0)
+    assert device[2][-1] == ('volume', 9)
+    assert ('select', f"http://wisp.local:9001/api/stations/{chosen['id']}/stream") in device[2]
+    assert not any(call[0] == 'preset' for call in device[2])

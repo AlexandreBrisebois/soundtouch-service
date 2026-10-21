@@ -252,6 +252,7 @@ def matches(expected: dict[str, str], data: dict[str, Any]) -> bool:
     # A source alone cannot distinguish two presets. Location is opaque and not logged.
     return bool(expected.get('source') and expected.get('location')) and all(
         actual.get(key) == value for key, value in expected.items() if value
+        and not (key == 'type' and expected.get('source') == 'STORED_MUSIC' and not actual.get('type'))
     )
 
 
@@ -316,7 +317,7 @@ def _volume(op: Operation, value: int) -> bool:
 
 
 def run_on(op: Operation, preset: int | None, volume: int, source: str | None = None,
-           fade_in_duration: float = 300, force: bool = False) -> None:
+           fade_in_duration: float = 300, force: bool = False, favorite_id: str | None = None, station_id: str | None = None, allow_archived_station: bool = False) -> None:
     if not current(op):
         return
     finish(op, 'starting', 'checking_speaker')
@@ -331,10 +332,44 @@ def run_on(op: Operation, preset: int | None, volume: int, source: str | None = 
     ip = _address(op)
     if ip is None:
         return
-    expected = {'source': 'AUX'} if source == 'AUX' else status.get_preset_identity(ip, preset or 1, timeout=_budget(op))
+    if station_id:
+        from app.core import favorites, library
+        try:
+            station_content = favorites.station_content(station_id, allow_removed=allow_archived_station)
+            expected = {key: station_content[key] for key in ('source', 'sourceAccount', 'location', 'type') if station_content.get(key)}
+            ready = any(item['source'] == 'LOCAL_INTERNET_RADIO' and item['ready'] for item in library.read_sources(ip))
+            if not ready or '/select' not in favorites.capabilities(ip):
+                finish(op, 'unknown', 'station_source_unavailable')
+                return
+        except (ValueError, KeyError, TypeError):
+            finish(op, 'unknown', 'station_unavailable')
+            return
+    else:
+        expected = {'source': 'AUX'} if source == 'AUX' else status.get_preset_identity(ip, preset or 1, timeout=_budget(op))
     if not expected or (source != 'AUX' and not expected.get('location')):
         finish(op, 'unknown', 'preset_identity_unavailable')
         return
+    if favorite_id:
+        from app.core import favorites, library
+        try:
+            favorite = favorites.get(favorite_id)
+            if (favorite.get('state') != 'readback_matched'
+                    or favorite.get('speaker_id') != op['device_id']
+                    or favorite.get('slot') != preset
+                    or not library.same_content(favorite['content'], expected)):
+                finish(op, 'unknown', 'favorite_preset_changed')
+                return
+            sources = library.read_sources(ip)
+            if not any(s['source'] == expected['source'] and s['ready'] and
+                       (s['source'] != 'STORED_MUSIC' or s['account'] == expected.get('sourceAccount')) for s in sources):
+                finish(op, 'unknown', 'favorite_source_unavailable')
+                return
+            if favorite['kind'] == 'radio' and expected['location'] != f"{favorites.radio_base()}/api/radio/{favorite_id}":
+                finish(op, 'unknown', 'radio_base_changed')
+                return
+        except (ValueError, KeyError, TypeError):
+            finish(op, 'unknown', 'favorite_unavailable')
+            return
     op['expected'] = expected
     # Preset/identity reads may have taken seconds. An automatic ON must remain
     # polite if someone started audio while those reads were in flight.
@@ -351,7 +386,7 @@ def run_on(op: Operation, preset: int | None, volume: int, source: str | None = 
         return
     # PRESET and AUX keys request the intended source directly, avoiding a POWER
     # toggle that could resume the wrong source. Firmware behavior is qualified separately.
-    selected = _write(op, lambda ip: control.send_key(ip, 'AUX_INPUT', timeout=_budget(op, 3.0)) if source == 'AUX'
+    selected = _write(op, lambda ip: control.select_content(ip, station_content, timeout=_budget(op, 3.0)) if station_id else control.send_key(ip, 'AUX_INPUT', timeout=_budget(op, 3.0)) if source == 'AUX'
                       else control.play_preset(ip, preset or 1, timeout=_budget(op, 3.0)))
     if not selected:
         return

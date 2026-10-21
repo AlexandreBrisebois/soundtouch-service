@@ -5,6 +5,7 @@ import threading
 from flask import Flask
 from flasgger import Swagger
 from app.api.routes import api_bp
+from app.api.favorites import favorites_bp
 from app.core import discovery, speaker_cache
 from app.scheduler import jobs
 
@@ -57,6 +58,7 @@ def create_app():
     })
     
     app_instance.register_blueprint(api_bp)
+    app_instance.register_blueprint(favorites_bp)
     
     # Start the background dynamic scheduler as a daemon thread
     jobs.start_daemon()
@@ -70,3 +72,4 @@ if __name__ == "__main__":
     app_server = create_app()
     port = int(os.environ.get("PORT", 9001))
     app_server.run(host="0.0.0.0", port=port, debug=False)
+
