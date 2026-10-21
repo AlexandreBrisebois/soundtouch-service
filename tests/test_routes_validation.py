@@ -457,3 +457,28 @@ def test_manual_volume_rejects_nonfinite_input_without_server_error(monkeypatch,
     monkeypatch.setattr("app.api.routes.discovery.get_device_ip", lambda *_a: pytest.fail("Invalid input must not query LAN"))
     response = client.post("/api/Living Room/volume", json={"volume": volume})
     assert response.status_code == 400
+
+@pytest.mark.parametrize('explicit', [True, False])
+def test_saved_favorite_canonicalizes_slot_and_preserves_legacy_edit(monkeypatch, explicit):
+    favorite_id = 'a' * 32
+    queued = []
+    monkeypatch.setattr('app.api.routes.jobs.config_queue.put', queued.append)
+    monkeypatch.setattr('app.api.routes.jobs.get_current_config', lambda: {'Room': [{'name': 'Morning', 'favorite_id': favorite_id}]})
+    monkeypatch.setattr('app.api.routes.favorites.schedule_binding', lambda id, speaker: {'speaker_id': 'ABC', 'slot': 3} if id == favorite_id and speaker == 'Room' else None)
+    payload = {'name': 'Morning', 'days': ['monday'], 'on_time': '07:00', 'off_time': '08:00', 'preset': 1, 'volume': 10}
+    if explicit:
+        payload['favorite_id'] = favorite_id
+    result = create_test_app().test_client().post('/api/Room/schedules', json=payload)
+    assert result.status_code == 202
+    assert queued[0]['data']['favorite_id'] == favorite_id
+    assert queued[0]['data']['speaker_id'] == 'ABC'
+    assert queued[0]['data']['preset'] == 3
+
+
+def test_explicit_numbered_preset_removes_favorite_binding(monkeypatch):
+    queued = []
+    monkeypatch.setattr('app.api.routes.jobs.config_queue.put', queued.append)
+    monkeypatch.setattr('app.api.routes.jobs.get_current_config', lambda: {'Room': [{'name': 'Morning', 'favorite_id': 'a' * 32}]})
+    result = create_test_app().test_client().post('/api/Room/schedules', json={'name': 'Morning', 'days': ['monday'], 'on_time': '07:00', 'off_time': '08:00', 'preset': 1, 'volume': 10, 'favorite_id': ''})
+    assert result.status_code == 202
+    assert 'favorite_id' not in queued[0]['data']

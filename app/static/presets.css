@@ -1,0 +1,16 @@
+/* Presets live below schedules, not in the compact speaker header. */
+.preset-panel { margin: 16px 0 28px; padding: 18px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.preset-panel h2 { font-size: 19px; line-height: 1.4; }
+.preset-panel h3 { font-size: 15px; margin: 20px 0 8px; }
+.preset-panel-header { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+.preset-help, #presets-message { font-size: 13px; line-height: 1.55; color: var(--text-muted); margin: 8px 0; overflow-wrap: anywhere; }
+#presets-message { color: var(--text); }
+.preset-action { min-height: 44px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--primary-lt); color: var(--primary-dk); font-size: 14px; margin: 4px 6px 4px 0; }
+.preset-action:disabled { opacity: .55; cursor: default; }
+.preset-action:focus-visible, .preset-panel input:focus-visible, .preset-panel select:focus-visible { outline: 3px solid var(--primary-dk); outline-offset: 2px; }
+.preset-favorite, .preset-library-item { padding: 12px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.preset-library-item > span:first-child { display: block; margin-bottom: 4px; }
+.preset-confirmation { margin: 14px 0; padding: 14px; background: var(--primary-lt); border-radius: var(--radius-sm); }
+.preset-panel label { display: block; font-size: 14px; margin: 12px 0 6px; }
+.preset-panel input, .preset-panel select { width: 100%; min-height: 44px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); }
+#f-favorite { width: 100%; }

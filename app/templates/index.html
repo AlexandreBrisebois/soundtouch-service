@@ -20,6 +20,8 @@
 
   <!-- Styles -->
   <link rel="stylesheet" href="/app-static/styles.css">
+  <link rel="stylesheet" href="/app-static/presets.css">
+  <script src="/app-static/presets.js"></script>
   <style>
     [hidden] { display: none !important; }
     #btn-cancel-operation { padding: 9px 12px; }
@@ -112,6 +114,45 @@
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         Add Schedule
       </button>
+      <button class="preset-action" id="btn-manage-presets" type="button" aria-expanded="false" aria-controls="presets-panel">Manage speaker presets</button>
+      <section class="preset-panel" id="presets-panel" hidden aria-labelledby="presets-title">
+        <div class="preset-panel-header">
+          <h2 id="presets-title" tabindex="-1">Speaker presets</h2>
+          <button class="preset-action" id="presets-close" data-preset-close type="button">Close</button>
+        </div>
+        <p id="presets-message" role="status" aria-live="polite" aria-atomic="true"></p>
+        <button class="preset-action" id="presets-refresh" type="button">Refresh</button>
+        <h3>Your favorites</h3><div id="preset-favorites"></div>
+        <h3>Music on your NAS</h3><div id="preset-sources"></div>
+        <div id="preset-browser" hidden>
+          <h3 id="preset-browser-title"></h3>
+          <button class="preset-action" id="preset-up" type="button">Up one level</button>
+          <div id="preset-items"></div>
+          <button class="preset-action" id="preset-more" type="button" hidden>Show more</button>
+        </div>
+        <div id="preset-selection" hidden>
+          <label for="preset-name">Favorite name</label><input id="preset-name" type="text" maxlength="100" autocomplete="off">
+          <label for="preset-slot">Speaker button</label><select id="preset-slot"></select>
+          <button class="preset-action" id="preset-review" type="button">Review assignment</button>
+        </div>
+        <div class="preset-confirmation" id="preset-confirmation" hidden>
+          <p id="preset-confirm-text" class="preset-help"></p>
+          <button class="preset-action" id="preset-confirm" type="button">Confirm button assignment</button>
+          <button class="preset-action" id="preset-cancel" type="button">Cancel</button>
+        </div>
+        <div class="preset-confirmation" id="preset-test-confirmation" hidden>
+          <p id="preset-test-text" class="preset-help"></p>
+          <button class="preset-action" id="preset-test-confirm" type="button">Start quiet test</button>
+          <button class="preset-action" id="preset-test-cancel" type="button">Cancel</button>
+        </div>
+        <h3>Internet radio</h3><p class="preset-help" id="preset-radio-help"></p>
+        <div id="preset-radio-form" hidden>
+          <label for="preset-radio-url">Direct audio stream URL</label>
+          <input id="preset-radio-url" type="url" inputmode="url" autocomplete="off" spellcheck="false" maxlength="2048" placeholder="https://radio.example/live.mp3" aria-describedby="preset-radio-url-help">
+          <p class="preset-help" id="preset-radio-url-help">Use the audio stream, not the station’s webpage. URLs with credentials or query parameters are not supported. Wisp must stay available for this radio preset.</p>
+          <button class="preset-action" id="preset-radio-choose" type="button">Choose station</button>
+        </div>
+      </section>
     </div>
 
     <div class="thumb-bar">
@@ -181,6 +222,11 @@
         </div>
       </div>
 
+      <div class="form-group">
+        <label class="form-label" for="f-favorite">Saved favorite <span class="form-label-optional">(optional)</span></label>
+        <select class="form-input" id="f-favorite"><option value="">Use a numbered preset or AUX</option></select>
+        <p class="preset-help" id="favorite-schedule-help">A saved favorite checks its button assignment before a scheduled start.</p>
+      </div>
       <!-- Preset -->
       <div class="form-group">
         <label class="form-label">Preset <span class="form-label-optional">(optional)</span></label>
@@ -316,6 +362,7 @@ const views = {
 };
 
 function showView(name) {
+  if (window.wispPresets) window.wispPresets.onViewChange(name);
   activeView = name;
   clearTimeout(playbackRefreshTimer);
   playbackRefreshGeneration += 1;
@@ -888,6 +935,7 @@ function openForm(data = null) {
   document.getElementById('form-back-label').textContent = currentSpeaker;
   validateForm();
   showView('form');
+  if (window.wispPresets) window.wispPresets.loadSchedule(currentSpeaker, data ? data.favorite_id : null);
 }
 
 function updateQuickChips(days) {
@@ -949,6 +997,7 @@ document.getElementById('f-volume').addEventListener('input', e => {
 document.querySelectorAll('.preset-pill').forEach(pill => {
   pill.addEventListener('click', () => {
     setSelectedPreset(pill.dataset.preset);
+    if (window.wispPresets) window.wispPresets.clearScheduleChoice();
   });
 });
 
@@ -989,7 +1038,8 @@ document.getElementById('btn-save').addEventListener('click', async () => {
   const payload = {
     name,
     previous_name: editingSchedule ? editingSchedule.name : null,
-    speaker_id: editingSchedule ? editingSchedule.speaker_id : undefined,
+    speaker_id: window.wispPresets?.scheduleBinding()?.speaker_id || (editingSchedule ? editingSchedule.speaker_id : undefined),
+    favorite_id: window.wispPresets ? window.wispPresets.scheduleValue() : undefined,
     days,
     on_time:          onTime,
     off_time:         offTime,
@@ -1034,6 +1084,26 @@ document.getElementById('btn-add-schedule').addEventListener('click', openAddFor
 document.querySelectorAll('.overlay').forEach(ov => {
   ov.addEventListener('click', e => { if (e.target === ov) closeAllOverlays(); });
 });
+
+if (window.WispPresetUI) {
+  window.wispPresets = window.WispPresetUI.create({
+    document, fetch: (...args) => fetch(...args), getSpeaker: () => currentSpeaker,
+    setPreset: setSelectedPreset,
+    openSchedule: favorite => {
+      openForm();
+      setSelectedPreset(favorite.slot);
+      window.wispPresets.loadSchedule(currentSpeaker, favorite.id);
+    },
+    onTest: (result, speaker) => {
+      if (speaker === currentSpeaker) {
+        playbackRefreshGeneration += 1;
+        latestOperation = result.operation || null;
+        renderOperation(latestOperation);
+        refreshPlayback(speaker);
+      }
+    },
+  });
+}
 
 /* ─── Boot ───────────────────────────────────────────────────────── */
 let bootStarted = false;

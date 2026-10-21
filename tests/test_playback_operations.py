@@ -347,3 +347,40 @@ def test_scheduled_on_stays_polite_if_manual_audio_starts_during_preset_read(dev
     playback.run_on(op, 1, 10)
     assert not device[2]
     assert playback.last('Room')['state'] == 'skipped'
+
+@pytest.mark.parametrize('change', ['slot', 'speaker_id', 'state', 'content'])
+def test_favorite_drift_never_changes_volume_or_plays(device, monkeypatch, change):
+    from app.core import favorites, library
+    saved = {'kind': 'nas', 'state': 'readback_matched', 'speaker_id': 'ABC', 'slot': 1,
+             'content': {'source': 'STORED_MUSIC', 'sourceAccount': 'server', 'location': 'album/1'}}
+    saved[change] = {'source': 'STORED_MUSIC', 'sourceAccount': 'server', 'location': 'other'} if change == 'content' else 'changed'
+    monkeypatch.setattr(favorites, 'get', lambda _: saved)
+    monkeypatch.setattr(library, 'read_sources', lambda _: [])
+    op = playback.begin('Room', 'Morning')
+    playback.run_on(op, preset=1, volume=3, favorite_id='favorite')
+    assert not device[2]
+    assert playback.last('Room')['reason'] == 'favorite_preset_changed'
+
+
+def test_ready_native_favorite_uses_existing_quiet_playback(device, monkeypatch):
+    from app.core import favorites, library
+    monkeypatch.setattr(favorites, 'get', lambda _: {
+        'kind': 'nas', 'state': 'readback_matched', 'speaker_id': 'ABC', 'slot': 1,
+        'content': {'source': 'STORED_MUSIC', 'type': 'dir', 'sourceAccount': 'server', 'location': 'album/1'}})
+    monkeypatch.setattr(library, 'read_sources', lambda _: [{'source': 'STORED_MUSIC', 'account': 'server', 'ready': True}])
+    op = playback.begin('Room', 'Morning')
+    playback.run_on(op, preset=1, volume=3, fade_in_duration=0, favorite_id='favorite')
+    assert playback.last('Room')['state'] == 'playing'
+    assert device[2][0] == ('volume', 0)
+
+
+def test_favorite_unready_source_never_selects(device, monkeypatch):
+    from app.core import favorites, library
+    monkeypatch.setattr(favorites, 'get', lambda _: {
+        'kind': 'nas', 'state': 'readback_matched', 'speaker_id': 'ABC', 'slot': 1,
+        'content': {'source': 'STORED_MUSIC', 'sourceAccount': 'server', 'location': 'album/1'}})
+    monkeypatch.setattr(library, 'read_sources', lambda _: [{'source': 'STORED_MUSIC', 'account': 'server', 'ready': False}])
+    op = playback.begin('Room', 'Morning')
+    playback.run_on(op, preset=1, volume=3, favorite_id='favorite')
+    assert not device[2]
+    assert playback.last('Room')['reason'] == 'favorite_source_unavailable'

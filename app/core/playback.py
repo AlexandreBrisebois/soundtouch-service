@@ -252,6 +252,7 @@ def matches(expected: dict[str, str], data: dict[str, Any]) -> bool:
     # A source alone cannot distinguish two presets. Location is opaque and not logged.
     return bool(expected.get('source') and expected.get('location')) and all(
         actual.get(key) == value for key, value in expected.items() if value
+        and not (key == 'type' and expected.get('source') == 'STORED_MUSIC' and not actual.get('type'))
     )
 
 
@@ -316,7 +317,7 @@ def _volume(op: Operation, value: int) -> bool:
 
 
 def run_on(op: Operation, preset: int | None, volume: int, source: str | None = None,
-           fade_in_duration: float = 300, force: bool = False) -> None:
+           fade_in_duration: float = 300, force: bool = False, favorite_id: str | None = None) -> None:
     if not current(op):
         return
     finish(op, 'starting', 'checking_speaker')
@@ -335,6 +336,27 @@ def run_on(op: Operation, preset: int | None, volume: int, source: str | None = 
     if not expected or (source != 'AUX' and not expected.get('location')):
         finish(op, 'unknown', 'preset_identity_unavailable')
         return
+    if favorite_id:
+        from app.core import favorites, library
+        try:
+            favorite = favorites.get(favorite_id)
+            if (favorite.get('state') != 'readback_matched'
+                    or favorite.get('speaker_id') != op['device_id']
+                    or favorite.get('slot') != preset
+                    or not library.same_content(favorite['content'], expected)):
+                finish(op, 'unknown', 'favorite_preset_changed')
+                return
+            sources = library.read_sources(ip)
+            if not any(s['source'] == expected['source'] and s['ready'] and
+                       (s['source'] != 'STORED_MUSIC' or s['account'] == expected.get('sourceAccount')) for s in sources):
+                finish(op, 'unknown', 'favorite_source_unavailable')
+                return
+            if favorite['kind'] == 'radio' and expected['location'] != f"{favorites.radio_base()}/api/radio/{favorite_id}":
+                finish(op, 'unknown', 'radio_base_changed')
+                return
+        except (ValueError, KeyError, TypeError):
+            finish(op, 'unknown', 'favorite_unavailable')
+            return
     op['expected'] = expected
     # Preset/identity reads may have taken seconds. An automatic ON must remain
     # polite if someone started audio while those reads were in flight.

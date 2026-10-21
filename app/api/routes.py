@@ -9,7 +9,7 @@ from app.core.constants import (
   DEFAULT_PRESET,
   DEFAULT_VOLUME,
 )
-from app.core import discovery, status, control, speaker_cache
+from app.core import discovery, status, control, speaker_cache, favorites
 from app.core.models import ConfigMutation, Schedule, SchedulePayload
 from app.scheduler import jobs
 
@@ -60,6 +60,8 @@ def _to_schedule(payload: Mapping[str, Any]) -> Schedule:
   }
   if payload.get("speaker_id"):
     schedule["speaker_id"] = str(payload["speaker_id"])
+  if payload.get("favorite_id"):
+    schedule["favorite_id"] = str(payload["favorite_id"])
   return schedule
 
 
@@ -120,6 +122,12 @@ def _validate_schedule_payload(data: Any) -> tuple[SchedulePayload | None, dict[
       errors["speaker_id"] = "'speaker_id' must be a non-empty string when provided."
     else:
       normalized["speaker_id"] = speaker_id.strip()
+
+  if data.get("favorite_id"):
+    if not isinstance(data["favorite_id"], str) or not re.fullmatch(r"[0-9a-f]{32}", data["favorite_id"]):
+      errors["favorite_id"] = "Choose a valid saved favorite."
+    else:
+      normalized["favorite_id"] = data["favorite_id"]
 
   previous_name = data.get("previous_name")
   if previous_name in (None, ""):
@@ -288,6 +296,21 @@ def api_add_schedule(speaker_name: str) -> tuple[Any, int]:
       return jsonify({"errors": errors}), 400
 
     assert normalized is not None
+
+    previous_name = normalized.get("previous_name") or normalized["name"]
+    existing = next((item for item in jobs.get_current_config().get(speaker_name, [])
+                     if item.get("name") == previous_name), None)
+    # Older clients omit favorite_id; do not silently remove protection on edit.
+    if isinstance(data, dict) and "favorite_id" not in data and existing and existing.get("favorite_id"):
+      normalized["favorite_id"] = existing["favorite_id"]
+    if normalized.get("favorite_id"):
+      try:
+        binding = favorites.schedule_binding(normalized["favorite_id"], speaker_name)
+      except ValueError as exc:
+        return jsonify({"errors": {"favorite_id": str(exc)}}), 400
+      normalized["speaker_id"] = binding["speaker_id"]
+      normalized["preset"] = binding["slot"]
+      normalized["source"] = None
 
     # Editing a legacy client payload must not silently drop an existing identity binding.
     if "speaker_id" not in normalized:
