@@ -14,21 +14,24 @@ jobs:
 
     strategy:
       matrix:
-        python-version: ["3.14"]
+        python-version: ["3.14", "3.15"]
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pytest ruff mypy
+          pip install -r requirements-dev.txt
+
+      - name: Check installed dependency compatibility
+        run: python -m pip check
 
       - name: Run Ruff
         run: ruff check app tests
@@ -44,20 +47,35 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
-      - name: Set up Python 3.14
-        uses: actions/setup-python@v5
+      - name: Set up Python 3.15
+        uses: actions/setup-python@v7.0.0
         with:
-          python-version: "3.14"
+          python-version: "3.15"
 
       - name: Install dependency audit tools
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pip-audit
+          pip install -r requirements-dev.txt
 
       - name: Run dependency vulnerability audit
         run: pip-audit -r requirements.txt
 
       - name: Report outdated dependencies
         run: pip list --outdated
+
+
+  container-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Build production image without publishing
+        run: docker build --pull -t wisp-dependency-smoke .
+
+      - name: Check production dependencies and Swagger integration
+        run: |
+          docker run --rm --entrypoint python wisp-dependency-smoke -m pip check
+          docker run --rm --entrypoint python -e PYTHONPATH=/workspace -v "$PWD/tests/test_dependency_smoke.py:/tmp/dependency_smoke.py:ro" wisp-dependency-smoke /tmp/dependency_smoke.py

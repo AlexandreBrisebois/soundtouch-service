@@ -1,4 +1,4 @@
-FROM python:3.14-alpine
+FROM python:3.15.0-alpine3.24
 
 # Set the working directory
 WORKDIR /workspace

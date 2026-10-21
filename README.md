@@ -161,7 +161,7 @@ For best performance on a **Synology NAS**, run the container in **Host Network 
 Wisp enforces lightweight quality checks in CI and supports the same checks locally.
 
 ```bash
-pip install -r requirements.txt ruff mypy pre-commit
+pip install -r requirements-dev.txt
 pre-commit install
 pre-commit run --all-files
 ```
