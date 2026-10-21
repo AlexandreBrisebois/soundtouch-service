@@ -20,6 +20,10 @@
 
   <!-- Styles -->
   <link rel="stylesheet" href="/app-static/styles.css">
+  <style>
+    [hidden] { display: none !important; }
+    #btn-cancel-operation { padding: 9px 12px; }
+  </style>
 
   <!-- Typography -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -96,6 +100,9 @@
       <div id="detail-speaker-header" class="detail-speaker-header">
         <div class="detail-speaker-name" id="detail-speaker-name"></div>
         <div class="detail-speaker-status" id="detail-speaker-status"></div>
+        <p class="schedule-meta" id="detail-operation" role="status" aria-live="polite" aria-atomic="true">No recent automation run.</p>
+        <button class="btn-pause" id="btn-cancel-operation" hidden aria-describedby="cancel-operation-help">Cancel automation</button>
+        <p class="schedule-meta" id="cancel-operation-help" hidden>Cancels pending playback and fades. Audio already playing may continue.</p>
       </div>
 
       <div class="section-label">Schedules</div>
@@ -232,7 +239,8 @@
   <div class="sheet">
     <div class="sheet-handle"></div>
     <div class="sheet-title" id="more-sheet-name"></div>
-    <button class="sheet-btn sheet-btn-confirm" id="sheet-btn-trigger">▶ Run Now</button>
+    <div class="sheet-sub" id="run-now-help">Run Now can replace current audio, even when this schedule is paused. Acceptance does not confirm playback.</div>
+    <button class="sheet-btn sheet-btn-confirm" id="sheet-btn-trigger" aria-describedby="run-now-help">▶ Run Now</button>
     <button class="sheet-btn sheet-btn-danger" id="sheet-btn-delete">🗑 Delete Schedule</button>
   </div>
 </div>
@@ -260,7 +268,7 @@
 </div>
 
 <!-- Toast -->
-<div id="toast"></div>
+<div id="toast" role="status" aria-live="polite"></div>
 
 <script>
 /* ─── State ──────────────────────────────────────────────────────── */
@@ -275,6 +283,23 @@ let selectedPreset = 1;        // 1-6 or "AUX"
 let nameAutoManaged = true;    // whether name tracks on-time
 let allSchedules    = {};      // {speakerName: [schedules]}
 let editingSchedule = null;    // null or the schedule object being edited
+let scheduleRuntime = {};
+let latestOperation = null;
+let activeView = 'hub';
+let playbackRefreshTimer = null;
+let playbackRefreshGeneration = 0;
+const pendingRuns = new Set();
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+
+async function requestJson(url, options = {}) {
+  const response = await fetch(url, options);
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Request failed. Please try again.');
+  return data;
+}
 
 function setSelectedPreset(value) {
   selectedPreset = value === 'AUX' ? 'AUX' : Number(value);
@@ -291,8 +316,12 @@ const views = {
 };
 
 function showView(name) {
+  activeView = name;
+  clearTimeout(playbackRefreshTimer);
+  playbackRefreshGeneration += 1;
   Object.values(views).forEach(v => v.classList.remove('active'));
   views[name].classList.add('active');
+  if (name === 'speaker' && currentSpeaker) refreshPlayback(currentSpeaker);
 }
 
 /* ─── Toast ──────────────────────────────────────────────────────── */
@@ -365,6 +394,13 @@ async function loadHub() {
   }
   spinner.style.display = 'none';
 
+  // Keep configured speakers reachable in the UI even when discovery is offline.
+  Object.keys(allSchedules).forEach(name => {
+    if (!discoveredSpeakers.some(speaker => speaker.name === name)) {
+      discoveredSpeakers.push({name, ip: null});
+    }
+  });
+
   // Update greeting with count
   const hours = new Date().getHours();
   let greet = "Good evening";
@@ -373,7 +409,7 @@ async function loadHub() {
   
   const activeCount = Object.values(speakerStatuses).filter(s => s === 'playing').length;
   document.getElementById('hub-greeting').textContent = `${greet}${activeCount > 0 ? ` · ${activeCount} active` : ''}`;
-  document.getElementById('hub-section-label').textContent = `Speakers${discoveredSpeakers.length > 0 ? ` · ${discoveredSpeakers.length} found` : ''}`;
+  document.getElementById('hub-section-label').textContent = `Speakers${discoveredSpeakers.length > 0 ? ` · ${discoveredSpeakers.length}` : ''}`;
 
   if (!discoveredSpeakers.length) {
     list.innerHTML = `<div class="empty-state">
@@ -390,10 +426,10 @@ async function loadHub() {
     card.className = 'speaker-card';
     card.id = `card-${sp.name}`;
     card.innerHTML = `
-      <div class="status-dot off" id="dot-${sp.name}"></div>
+      <div class="status-dot off" id="dot-${escapeHtml(sp.name)}"></div>
       <div class="speaker-info">
-        <div class="speaker-name">${sp.name}</div>
-        <div class="speaker-status" id="status-${sp.name}">Checking…</div>
+        <div class="speaker-name">${escapeHtml(sp.name)}</div>
+        <div class="speaker-status" id="status-${escapeHtml(sp.name)}">Checking…</div>
         <div class="schedule-badge ${scheds.length ? '' : 'empty'}">${scheds.length} schedule${scheds.length === 1 ? '' : 's'}</div>
       </div>
       <span class="chevron"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>`;
@@ -406,10 +442,11 @@ async function loadHub() {
 async function fetchSpeakerStatus(speakerName) {
   try {
     const res  = await fetch(`/api/${encodeURIComponent(speakerName)}/status`);
+    if (!res.ok) throw new Error('Speaker unavailable');
     const data = await res.json();
     const statusTxt = data.status || 'OFFLINE';
-    const playing   = statusTxt === 'Playing' || statusTxt === 'Buffering';
-    speakerStatuses[speakerName] = playing ? 'playing' : 'standby';
+    const playing   = statusTxt === 'Playing';
+    speakerStatuses[speakerName] = playing ? 'playing' : statusTxt.toLowerCase();
 
     const dot    = document.getElementById(`dot-${speakerName}`);
     const label  = document.getElementById(`status-${speakerName}`);
@@ -431,42 +468,140 @@ async function fetchSpeakerStatus(speakerName) {
     const currentGreet = document.getElementById('hub-greeting').textContent.split(' · ')[0];
     document.getElementById('hub-greeting').textContent = `${currentGreet}${activeCount > 0 ? ` · ${activeCount} active` : ''}`;
   } catch {
-    speakerStatuses[speakerName] = 'standby';
+    speakerStatuses[speakerName] = 'unavailable';
     const label = document.getElementById(`status-${speakerName}`);
     if (label) label.textContent = 'Unavailable';
+    const dot = document.getElementById(`dot-${speakerName}`);
+    if (dot) dot.className = 'status-dot off';
+    const card = document.getElementById(`card-${speakerName}`);
+    if (card) card.classList.remove('playing');
   }
 }
 
 /* ─── SCREEN 2: SPEAKER DETAIL ───────────────────────────────────── */
 async function openSpeaker(name) {
   currentSpeaker = name;
+  latestOperation = null;
+  scheduleRuntime = {};
+  currentSchedules = [];
   document.getElementById('detail-speaker-name').textContent = name;
-  
-  // Dynamic status update for detail view
-  try {
-     const res = await fetch(`/api/${encodeURIComponent(name)}/status`);
-     const data = await res.json();
-     let display = data.status || 'Standby';
-     if (data.source && data.source !== 'STANDBY') {
-       display = `${data.status} · ${data.source}`;
-       if (data.track) display += `<br><span style="color:var(--text-muted);font-size:12px;font-weight:400">${data.track}${data.artist ? ` — ${data.artist}` : ''}</span>`;
-     }
-     document.getElementById('detail-speaker-status').innerHTML = display;
-  } catch {
-     document.getElementById('detail-speaker-status').textContent = 'Offline';
-  }
+  document.getElementById('detail-speaker-status').textContent = 'Checking…';
+  renderOperation(null);
   showView('speaker');
   loadSchedules();
+  refreshDetailStatus(name);
+}
+
+async function refreshDetailStatus(name) {
+  try {
+     const res = await fetchWithTimeout(`/api/${encodeURIComponent(name)}/status`);
+     if (!res.ok) throw new Error('Speaker unavailable');
+     const data = await res.json();
+     if (name !== currentSpeaker) return;
+     let display = data.status || 'Unknown';
+     if (data.source && data.source !== 'STANDBY') {
+       display += ` · ${data.source}`;
+       if (data.track) display += ` · ${data.track}${data.artist ? ` / ${data.artist}` : ''}`;
+     }
+     document.getElementById('detail-speaker-status').textContent = display;
+  } catch {
+     if (name === currentSpeaker) document.getElementById('detail-speaker-status').textContent = 'Unavailable';
+  }
+}
+
+function operationIsActive(operation) {
+  return !!operation && operation.terminal === false;
+}
+
+function operationSummary(operation) {
+  if (!operation) return 'No recent automation run.';
+  const labels = {
+    accepted: 'Accepted, waiting to start',
+    starting: 'Starting, playback not yet confirmed',
+    playing: 'Playing reported by speaker; audibility not verified',
+    completed: 'Completed',
+    failed: 'Failed',
+    unknown: 'Unknown; playback could not be confirmed',
+    skipped: 'Skipped',
+    canceled: 'Cancelled',
+  };
+  const label = labels[operation.state] || 'Unknown';
+  const schedule = operation.schedule_name ? `${operation.schedule_name} · ` : '';
+  const reason = operation.reason ? ` · ${String(operation.reason).replace(/_/g, ' ')}` : '';
+  const updated = Number.isFinite(operation.updated_at)
+    ? ` · ${new Date(operation.updated_at * 1000).toLocaleString()}` : '';
+  return `Last run: ${schedule}${label}${reason}${updated}`;
+}
+
+function renderOperation(operation) {
+  document.getElementById('detail-operation').textContent = operationSummary(operation);
+  const active = operationIsActive(operation);
+  document.getElementById('btn-cancel-operation').hidden = !active;
+  document.getElementById('cancel-operation-help').hidden = !active;
+  updateRunButton();
+}
+
+function nextRunSummary(runtime) {
+  if (!runtime) return 'Next run unavailable';
+  const zone = runtime.timezone || 'Time zone unavailable';
+  if (runtime.paused) return `Paused · ${zone}`;
+  if (!runtime.next_run) return `Next run unavailable · ${zone}`;
+  let when = runtime.next_run;
+  try {
+    if (runtime.timezone) when = new Date(runtime.next_run).toLocaleString(undefined, {
+      timeZone: runtime.timezone, dateStyle: 'medium', timeStyle: 'short',
+    });
+  } catch { /* Keep the server's offset-bearing timestamp if the zone is unsupported. */ }
+  return `Next run: ${when} (${zone})`;
+}
+
+function renderScheduleRuntime() {
+  document.querySelectorAll('[data-runtime-schedule]').forEach(element => {
+    const runtime = scheduleRuntime[element.dataset.runtimeSchedule];
+    element.textContent = nextRunSummary(runtime);
+  });
+}
+
+async function refreshPlayback(name) {
+  if (name !== currentSpeaker || activeView !== 'speaker') return;
+  clearTimeout(playbackRefreshTimer);
+  const generation = ++playbackRefreshGeneration;
+  const root = `/api/${encodeURIComponent(name)}`;
+  const results = await Promise.allSettled([
+    fetchWithTimeout(`${root}/operations`).then(async response => {
+      if (!response.ok) throw new Error('Run status unavailable');
+      return response.json();
+    }),
+    fetchWithTimeout(`${root}/schedules/runtime`).then(async response => {
+      if (!response.ok) throw new Error('Schedule runtime unavailable');
+      return response.json();
+    }),
+  ]);
+  // A late response must never overwrite a newer action or a different speaker.
+  if (generation !== playbackRefreshGeneration || name !== currentSpeaker || activeView !== 'speaker') return;
+  if (results[0].status === 'fulfilled') {
+    latestOperation = results[0].value.last_outcome;
+    renderOperation(latestOperation);
+  } else {
+    document.getElementById('detail-operation').textContent = 'Last run status unavailable. Playback is not confirmed.';
+  }
+  scheduleRuntime = results[1].status === 'fulfilled'
+    ? Object.fromEntries(results[1].value.schedules.map(runtime => [runtime.schedule_name, runtime])) : {};
+  renderScheduleRuntime();
+  refreshDetailStatus(name);
+  playbackRefreshTimer = setTimeout(() => refreshPlayback(name), operationIsActive(latestOperation) ? 1500 : 15000);
 }
 
 async function loadSchedules() {
+  const name = currentSpeaker;
   const list = document.getElementById('schedule-list');
   list.innerHTML = '<div class="spinner"></div>';
   try {
-    const res  = await fetch('/api/schedules');
-    const data = await res.json();
-    currentSchedules = (data[currentSpeaker] || []);
+    const data = await requestJson('/api/schedules');
+    if (name !== currentSpeaker) return;
+    currentSchedules = (data[name] || []);
   } catch {
+    if (name !== currentSpeaker) return;
     currentSchedules = [];
   }
   renderSchedules();
@@ -495,28 +630,34 @@ function renderSchedules() {
     card.className = `schedule-card${isPaused ? ' paused' : ''}`;
     card.style.cursor = 'pointer';
     card.innerHTML = `
-      <div class="schedule-card-body" onclick="openForm(${JSON.stringify(s).replace(/"/g, '&quot;')})">
+      <div class="schedule-card-body" role="button" tabindex="0" aria-label="Edit ${escapeHtml(s.name)}">
         <div class="schedule-name">
-          ${s.name}
+          ${escapeHtml(s.name)}
           ${isPaused ? '<span class="paused-badge">Paused</span>' : ''}
         </div>
-        <div class="schedule-meta">${meta}</div>
+        <div class="schedule-meta">${escapeHtml(meta)}</div>
+        <div class="schedule-meta schedule-runtime"></div>
       </div>
       <div class="schedule-actions">
         ${isPaused
-          ? `<button class="btn-resume" data-name="${s.name}">
+          ? `<button class="btn-resume">
                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                Resume
              </button>`
-          : `<button class="btn-pause" data-name="${s.name}">
+          : `<button class="btn-pause">
                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
                Pause
              </button>`}
-        <button class="btn-more" data-name="${s.name}" data-paused="${isPaused}">···</button>
+        <button class="btn-more" aria-label="More options for ${escapeHtml(s.name)}">···</button>
       </div>`;
 
-    card.querySelector('.schedule-card-body').addEventListener('click', (e) => {
-      // openForm already handled by onclick for simplicity with JSON data
+    card.querySelector('.schedule-runtime').dataset.runtimeSchedule = s.name;
+    card.querySelector('.schedule-card-body').addEventListener('click', () => openForm(s));
+    card.querySelector('.schedule-card-body').addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        openForm(s);
+      }
     });
 
     if (isPaused) {
@@ -528,6 +669,7 @@ function renderSchedules() {
 
     list.appendChild(card);
   });
+  renderScheduleRuntime();
 }
 
 function formatDays(days) {
@@ -543,40 +685,88 @@ function formatDays(days) {
 }
 
 async function pauseSchedule(name) {
+  const speaker = currentSpeaker;
   try {
-    await fetch(`/api/${encodeURIComponent(currentSpeaker)}/schedules/${encodeURIComponent(name)}/pause`, {method:'PATCH'});
+    await requestJson(`/api/${encodeURIComponent(speaker)}/schedules/${encodeURIComponent(name)}/pause`, {method:'PATCH'});
+    if (speaker !== currentSpeaker) return;
     const s = currentSchedules.find(x => x.name === name);
     if (s) s.paused = true;
+    if (scheduleRuntime[name]) scheduleRuntime[name].paused = true;
     renderSchedules();
-    toast('Schedule paused');
-  } catch { toast('Could not pause schedule'); }
+    toast('Pause accepted');
+    setTimeout(() => refreshPlayback(speaker), 750);
+  } catch (error) { toast(error.message || 'Could not pause schedule'); }
 }
 
 async function resumeSchedule(name) {
+  const speaker = currentSpeaker;
   try {
-    await fetch(`/api/${encodeURIComponent(currentSpeaker)}/schedules/${encodeURIComponent(name)}/resume`, {method:'PATCH'});
+    await requestJson(`/api/${encodeURIComponent(speaker)}/schedules/${encodeURIComponent(name)}/resume`, {method:'PATCH'});
+    if (speaker !== currentSpeaker) return;
     const s = currentSchedules.find(x => x.name === name);
     if (s) s.paused = false;
+    delete scheduleRuntime[name];
     renderSchedules();
-    toast('Schedule resumed');
-  } catch { toast('Could not resume schedule'); }
+    toast('Resume accepted');
+    setTimeout(() => refreshPlayback(speaker), 750);
+  } catch (error) { toast(error.message || 'Could not resume schedule'); }
 }
 
 /* ─── More sheet ─────────────────────────────────────────────────── */
 function openMoreSheet(name) {
   moreTargetSchedule = name;
   document.getElementById('more-sheet-name').textContent = name;
+  updateRunButton();
   showOverlay('overlay-more');
 }
 
+function updateRunButton() {
+  const running = pendingRuns.has(JSON.stringify([currentSpeaker, moreTargetSchedule])) ||
+    (operationIsActive(latestOperation) && latestOperation.schedule_name === moreTargetSchedule);
+  const button = document.getElementById('sheet-btn-trigger');
+  button.disabled = running;
+  button.textContent = running ? 'Run in progress' : '▶ Run Now';
+}
+
 document.getElementById('sheet-btn-trigger').addEventListener('click', async () => {
+  const speaker = currentSpeaker;
+  const schedule = moreTargetSchedule;
+  const runKey = JSON.stringify([speaker, schedule]);
+  if (pendingRuns.has(runKey) || (operationIsActive(latestOperation) && latestOperation.schedule_name === schedule)) return;
+  pendingRuns.add(runKey);
+  updateRunButton();
   hideOverlay('overlay-more');
   try {
-    toast('Triggering schedule...');
-    await fetch(`/api/${encodeURIComponent(currentSpeaker)}/schedules/${encodeURIComponent(moreTargetSchedule)}/trigger`, {method:'POST'});
-    // Refresh status after a short delay to see the power state change
-    setTimeout(() => fetchSpeakerStatus(currentSpeaker), 4000);
-  } catch { toast('Could not trigger schedule'); }
+    const result = await requestJson(`/api/${encodeURIComponent(speaker)}/schedules/${encodeURIComponent(schedule)}/trigger`, {method:'POST'});
+    toast('Run accepted; playback not yet confirmed');
+    if (speaker === currentSpeaker) {
+      playbackRefreshGeneration += 1;
+      latestOperation = result.operation;
+      renderOperation(latestOperation);
+      refreshPlayback(speaker);
+    }
+  } catch (error) { toast(error.message || 'Could not start schedule'); }
+  finally {
+    pendingRuns.delete(runKey);
+    updateRunButton();
+  }
+});
+
+document.getElementById('btn-cancel-operation').addEventListener('click', async () => {
+  const speaker = currentSpeaker;
+  const button = document.getElementById('btn-cancel-operation');
+  button.disabled = true;
+  try {
+    const result = await requestJson(`/api/${encodeURIComponent(speaker)}/cancel`, {method:'POST'});
+    toast('Automation cancelled; audio may continue');
+    if (speaker === currentSpeaker) {
+      playbackRefreshGeneration += 1;
+      latestOperation = result.last_outcome;
+      renderOperation(latestOperation);
+      refreshPlayback(speaker);
+    }
+  } catch (error) { toast(error.message || 'Could not cancel automation'); }
+  finally { button.disabled = false; }
 });
 
 document.getElementById('sheet-btn-delete').addEventListener('click', () => {
@@ -598,31 +788,38 @@ document.getElementById('sheet-btn-delete-cancel').addEventListener('click', () 
 
 /* ─── Power (single) ─────────────────────────────────────────────── */
 document.getElementById('btn-power-speaker').addEventListener('click', async () => {
+  const speaker = currentSpeaker;
+  const button = document.getElementById('btn-power-speaker');
+  if (button.disabled) return;
+  button.disabled = true;
   try {
-    await fetch(`/api/${encodeURIComponent(currentSpeaker)}/power`, {method:'POST'});
-    toast(`Power signal sent to ${currentSpeaker}`);
-    setTimeout(() => fetchSpeakerStatus(currentSpeaker), 2000);
-  } catch { toast('Could not reach speaker'); }
+    await requestJson(`/api/${encodeURIComponent(speaker)}/power`, {method:'POST'});
+    toast(`Power signal sent to ${speaker}; state not yet confirmed`);
+  } catch (error) { toast(error.message || 'Could not reach speaker'); }
+  finally {
+    button.disabled = false;
+    refreshPlayback(speaker);
+    setTimeout(() => fetchSpeakerStatus(speaker), 2000);
+  }
 });
 
 /* ─── Turn Off All ───────────────────────────────────────────────── */
 document.getElementById('btn-all-off').addEventListener('click', () => showOverlay('overlay-all-off'));
 document.getElementById('sheet-btn-all-off-cancel').addEventListener('click', () => hideOverlay('overlay-all-off'));
 document.getElementById('sheet-btn-confirm-all-off').addEventListener('click', async () => {
+  const button = document.getElementById('sheet-btn-confirm-all-off');
+  if (button.disabled) return;
   hideOverlay('overlay-all-off');
-  const active = discoveredSpeakers.filter(sp => speakerStatuses[sp.name] === 'playing');
-  if (!active.length) { toast('All speakers are already off'); return; }
-  await Promise.allSettled(
-    active.map(sp => fetch(`/api/${encodeURIComponent(sp.name)}/power`, {method:'POST'}))
+  const active = discoveredSpeakers.filter(sp => ['playing', 'buffering', 'paused'].includes(speakerStatuses[sp.name]));
+  if (!active.length) { toast('No active speakers confirmed'); return; }
+  button.disabled = true;
+  const results = await Promise.allSettled(
+    active.map(sp => requestJson(`/api/${encodeURIComponent(sp.name)}/power`, {method:'POST'}))
   );
-  active.forEach(sp => {
-    speakerStatuses[sp.name] = 'standby';
-    const dot   = document.getElementById(`dot-${sp.name}`);
-    const label = document.getElementById(`status-${sp.name}`);
-    if (dot)   dot.className = 'status-dot off';
-    if (label) label.textContent = 'Standby';
-  });
-  toast('All speakers turned off');
+  const failed = results.filter(result => result.status === 'rejected').length;
+  toast(failed ? `${failed} power command(s) unconfirmed. Check speaker state.` : 'Power signals sent; speaker states not yet confirmed');
+  button.disabled = false;
+  active.forEach(sp => setTimeout(() => fetchSpeakerStatus(sp.name), 2000));
 });
 
 /* ─── SCREEN 3: ADD/EDIT SCHEDULE ────────────────────────────────── */
@@ -792,6 +989,7 @@ document.getElementById('btn-save').addEventListener('click', async () => {
   const payload = {
     name,
     previous_name: editingSchedule ? editingSchedule.name : null,
+    speaker_id: editingSchedule ? editingSchedule.speaker_id : undefined,
     days,
     on_time:          onTime,
     off_time:         offTime,
@@ -885,3 +1083,4 @@ window.addEventListener('load', () => {
 </script>
 </body>
 </html>
+

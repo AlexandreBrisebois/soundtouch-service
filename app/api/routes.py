@@ -1,5 +1,6 @@
 import re
 import logging
+import math
 from typing import Any, Mapping
 from flask import Blueprint, jsonify, request, render_template, current_app, send_from_directory, make_response
 from app.core.constants import (
@@ -24,8 +25,28 @@ def _log_with_fields(level: int, message: str, **fields: Any) -> None:
   logger.log(level, message, extra={"event_fields": fields})
 
 
+def _public_state(value: Any) -> Any:
+  """Keep private content matching data out of every public status response."""
+  if isinstance(value, dict):
+    return {
+      key: _public_state(item)
+      for key, item in value.items()
+      if key.replace("_", "").lower() not in {"contentidentity", "sourceaccount", "location"}
+    }
+  if isinstance(value, list):
+    return [_public_state(item) for item in value]
+  return value
+
+
+def _command_unconfirmed() -> tuple[Any, int]:
+  return jsonify({
+    "error": "Command delivery could not be confirmed. The speaker's state is unknown.",
+    "outcome": "unknown",
+  }), 502
+
+
 def _to_schedule(payload: Mapping[str, Any]) -> Schedule:
-  return {
+  schedule: Schedule = {
     "name": str(payload["name"]),
     "days": payload.get("days"),
     "on_time": payload.get("on_time"),
@@ -37,6 +58,9 @@ def _to_schedule(payload: Mapping[str, Any]) -> Schedule:
     "fade_out_duration": float(payload.get("fade_out_duration", DEFAULT_FADE_OUT_DURATION_SECONDS)),
     "paused": bool(payload.get("paused", False)),
   }
+  if payload.get("speaker_id"):
+    schedule["speaker_id"] = str(payload["speaker_id"])
+  return schedule
 
 
 def _coerce_int(value: Any, field_name: str, errors: dict[str, str], minimum: int | None = None, maximum: int | None = None) -> int | None:
@@ -45,7 +69,7 @@ def _coerce_int(value: Any, field_name: str, errors: dict[str, str], minimum: in
     return None
   try:
     coerced = int(value)
-  except (TypeError, ValueError):
+  except (TypeError, ValueError, OverflowError):
     errors[field_name] = f"'{field_name}' must be an integer."
     return None
 
@@ -66,11 +90,11 @@ def _coerce_non_negative_number(value: Any, field_name: str, errors: dict[str, s
     return None
   try:
     coerced = float(value)
-  except (TypeError, ValueError):
+  except (TypeError, ValueError, OverflowError):
     errors[field_name] = f"'{field_name}' must be a number."
     return None
-  if coerced < 0:
-    errors[field_name] = f"'{field_name}' must be greater than or equal to 0."
+  if not math.isfinite(coerced) or not 0 <= coerced <= 3600:
+    errors[field_name] = f"'{field_name}' must be between 0 and 3600 seconds (1 hour)."
     return None
   if coerced.is_integer():
     return int(coerced)
@@ -89,6 +113,13 @@ def _validate_schedule_payload(data: Any) -> tuple[SchedulePayload | None, dict[
     errors["name"] = "'name' is required."
   else:
     normalized["name"] = name.strip()
+
+  if "speaker_id" in data:
+    speaker_id = data["speaker_id"]
+    if not isinstance(speaker_id, str) or not speaker_id.strip():
+      errors["speaker_id"] = "'speaker_id' must be a non-empty string when provided."
+    else:
+      normalized["speaker_id"] = speaker_id.strip()
 
   previous_name = data.get("previous_name")
   if previous_name in (None, ""):
@@ -257,6 +288,14 @@ def api_add_schedule(speaker_name: str) -> tuple[Any, int]:
       return jsonify({"errors": errors}), 400
 
     assert normalized is not None
+
+    # Editing a legacy client payload must not silently drop an existing identity binding.
+    if "speaker_id" not in normalized:
+      previous_name = normalized.get("previous_name") or normalized["name"]
+      existing = next((item for item in jobs.get_current_config().get(speaker_name, [])
+                       if item.get("name") == previous_name), None)
+      if existing and existing.get("speaker_id"):
+        normalized["speaker_id"] = existing["speaker_id"]
         
     jobs.config_queue.put(ConfigMutation(
         action="add_update",
@@ -413,6 +452,8 @@ def api_trigger_schedule(speaker_name: str, schedule_name: str) -> tuple[Any, in
         description: Trigger request accepted.
       404:
         description: Schedule not found.
+      503:
+        description: Playback worker is unavailable; no run was accepted.
     """
     config = jobs.get_current_config()
     schedules = config.get(speaker_name, [])
@@ -420,18 +461,37 @@ def api_trigger_schedule(speaker_name: str, schedule_name: str) -> tuple[Any, in
     if target is None:
         return jsonify({"error": f"Schedule '{schedule_name}' not found for speaker '{speaker_name}'"}), 404
 
-    jobs.submit_background_task(
-      jobs.auto_on_job,
-      speaker_name,
-      target.get("preset", DEFAULT_PRESET),
-      target.get("volume", DEFAULT_VOLUME),
-      target.get("source"),
-      target.get("fade_in_duration", DEFAULT_FADE_IN_DURATION_SECONDS),
-      True,
-    )
+    operation = jobs.queue_on(speaker_name, target, force=True)
+    if operation is None:
+      return jsonify({"error": "Playback worker unavailable. No run was accepted."}), 503
     _log_with_fields(logging.INFO, "Manual trigger queued.", speaker=speaker_name, schedule=schedule_name)
 
-    return jsonify({"message": f"Manually triggering schedule '{schedule_name}' on '{speaker_name}'"}), 202
+    return jsonify({
+      "message": "Run accepted. Playback is not yet confirmed.",
+      "operation": _public_state(operation),
+    }), 202
+
+
+@api_bp.route("/api/<speaker_name>/operations", methods=["GET"])
+def api_operations(speaker_name: str) -> Any:
+    """Read the latest operation even when the speaker is unavailable."""
+    return jsonify({"speaker": speaker_name, "last_outcome": _public_state(jobs.get_last_outcome(speaker_name))})
+
+
+@api_bp.route("/api/<speaker_name>/schedules/runtime", methods=["GET"])
+def api_schedule_runtime(speaker_name: str) -> Any:
+    """Return server-computed next occurrences with explicit time zones."""
+    return jsonify({"speaker": speaker_name, "schedules": _public_state(jobs.get_schedule_runtime(speaker_name))})
+
+
+@api_bp.route("/api/<speaker_name>/cancel", methods=["POST"])
+def api_cancel(speaker_name: str) -> Any:
+    """Invalidate automation, without sending a power or playback command."""
+    jobs.cancel_operation(speaker_name, reason="user_cancelled")
+    return jsonify({
+      "message": "Automation cancelled. Audio may continue; use Power to change speaker power.",
+      "last_outcome": _public_state(jobs.get_last_outcome(speaker_name)),
+    })
 
 
 @api_bp.route("/api/discover", methods=["GET"])
@@ -481,12 +541,12 @@ def api_status(speaker_name: str) -> tuple[Any, int]:
     # Phase 2: Prioritize memory cache (WebSocket push)
     cached = speaker_cache.get_speaker_state(speaker_name)
     if cached:
-        return jsonify({"speaker": speaker_name, "ip": ip, **cached})
+        return jsonify(_public_state({"speaker": speaker_name, "ip": ip, **cached}))
         
     # Fallback status check if cache not ready
     status_data = status.get_now_playing(ip)
     volume      = status.get_volume(ip)
-    return jsonify({"speaker": speaker_name, "ip": ip, "volume": volume, **status_data})
+    return jsonify(_public_state({"speaker": speaker_name, "ip": ip, "volume": volume, **status_data}))
 
 @api_bp.route("/api/<speaker_name>/power", methods=["POST"])
 def api_power(speaker_name: str) -> tuple[Any, int]:
@@ -508,9 +568,11 @@ def api_power(speaker_name: str) -> tuple[Any, int]:
     """
     ip = discovery.get_device_ip(speaker_name)
     if not ip:
+        jobs.cancel_operation(speaker_name)
         return jsonify({"error": "Speaker not found"}), 404
-    control.power_action(ip)
-    return jsonify({"message": f"Sent POWER toggle signal to {speaker_name} at {ip}"})
+    if not jobs.manual_control(speaker_name, lambda current_ip: control.power_action(current_ip)):
+        return _command_unconfirmed()
+    return jsonify({"message": f"Sent POWER toggle signal to {speaker_name}"})
 
 @api_bp.route("/api/<speaker_name>/preset/<int:preset_id>", methods=["POST"])
 def api_preset(speaker_name: str, preset_id: int) -> tuple[Any, int]:
@@ -535,13 +597,15 @@ def api_preset(speaker_name: str, preset_id: int) -> tuple[Any, int]:
       404:
         description: Speaker not found on the local network.
     """
-    ip = discovery.get_device_ip(speaker_name)
-    if not ip:
-        return jsonify({"error": "Speaker not found"}), 404
     if not 1 <= preset_id <= 6:
       return jsonify({"error": "Preset must be between 1 and 6."}), 400
-    control.play_preset(ip, preset_num=preset_id)
-    return jsonify({"message": f"Playing PRESET_{preset_id} on {speaker_name} at {ip}"})
+    ip = discovery.get_device_ip(speaker_name)
+    if not ip:
+        jobs.cancel_operation(speaker_name)
+        return jsonify({"error": "Speaker not found"}), 404
+    if not jobs.manual_control(speaker_name, lambda current_ip: control.play_preset(current_ip, preset_num=preset_id)):
+        return _command_unconfirmed()
+    return jsonify({"message": f"Sent PRESET_{preset_id} command to {speaker_name}. Playback is not yet confirmed."})
 
 @api_bp.route("/api/<speaker_name>/volume", methods=["POST"])
 def api_volume(speaker_name: str) -> tuple[Any, int]:
@@ -582,6 +646,9 @@ def api_volume(speaker_name: str) -> tuple[Any, int]:
 
     ip = discovery.get_device_ip(speaker_name)
     if not ip:
+        jobs.cancel_operation(speaker_name)
         return jsonify({"error": "Speaker not found"}), 404
-    control.set_volume(ip, vol)
-    return jsonify({"message": f"Set volume to {vol}% on {speaker_name} at {ip}"})
+    if not jobs.manual_control(speaker_name, lambda current_ip: control.set_volume(current_ip, vol)):
+        return _command_unconfirmed()
+    return jsonify({"message": f"Sent volume {vol}% command to {speaker_name}"})
+

@@ -199,3 +199,11 @@ Legacy root-level schedule maps are auto-migrated on load. Keep a backup of `con
 ---
 
 *Built with ❤️ for the Bose SoundTouch community.*
+
+
+## Playback outcomes and safe automation
+
+The existing speaker view distinguishes queued/starting runs from speaker-reported playback,
+shows the next run in the server's timezone, and can cancel pending automation/fades.
+See [the playback reliability contract](docs/playback-reliability.md) for safe-volume sequencing,
+manual priority, optional stable speaker IDs, failure behavior and remaining hardware checks.

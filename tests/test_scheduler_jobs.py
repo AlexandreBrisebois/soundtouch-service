@@ -3,162 +3,20 @@ import json
 import logging
 
 
-def test_auto_on_job_force_from_standby_applies_preset_then_fade(monkeypatch):
+def test_auto_on_job_sanitizes_arguments_and_uses_operation(monkeypatch):
     calls = []
-
-    monkeypatch.setattr(jobs.discovery, "get_device_ip", lambda _: "192.168.1.20")
-    monkeypatch.setattr(jobs.status, "get_now_playing", lambda _: {"status": "STANDBY"})
-    monkeypatch.setattr(jobs.time, "sleep", lambda _: None)
-
-    def fake_power_action(_ip):
-        calls.append(("power_action", None))
-        return True
-
-    def fake_play_preset(_ip, preset):
-        calls.append(("play_preset", preset))
-        return True
-
-    def fake_send_key(_ip, key):
-        calls.append(("send_key", key))
-        return True
-
-    def fake_set_volume(_ip, volume):
-        calls.append(("set_volume", volume))
-        return True
-
-    monkeypatch.setattr(jobs.control, "power_action", fake_power_action)
-    monkeypatch.setattr(jobs.control, "play_preset", fake_play_preset)
-    monkeypatch.setattr(jobs.control, "send_key", fake_send_key)
-    monkeypatch.setattr(jobs.control, "set_volume", fake_set_volume)
-
-    jobs.auto_on_job(
-        speaker_name="Living Room",
-        preset=2,
-        volume=3,
-        source=None,
-        fade_in_duration=0,
-        force=True,
-    )
-
-    assert calls == [
-        ("power_action", None),
-        ("play_preset", 2),
-        ("set_volume", 0),
-        ("set_volume", 3),
-    ]
+    monkeypatch.setattr(jobs.playback, 'begin', lambda name: {'speaker': name})
+    monkeypatch.setattr(jobs.playback, 'run_on', lambda *args: calls.append(args))
+    jobs.auto_on_job('Room', 99, 250, fade_in_duration=-1, force=True)
+    assert calls == [({'speaker': 'Room'}, 6, 100, None, 0.0, True)]
 
 
-def test_auto_on_job_force_active_applies_aux_then_fade(monkeypatch):
+def test_auto_off_job_uses_cancelable_operation(monkeypatch):
     calls = []
-
-    monkeypatch.setattr(jobs.discovery, "get_device_ip", lambda _: "192.168.1.20")
-    monkeypatch.setattr(jobs.status, "get_now_playing", lambda _: {"status": "PLAYING"})
-    monkeypatch.setattr(jobs.time, "sleep", lambda _: None)
-
-    def fake_power_action(_ip):
-        calls.append(("power_action", None))
-        return True
-
-    def fake_play_preset(_ip, preset):
-        calls.append(("play_preset", preset))
-        return True
-
-    def fake_send_key(_ip, key):
-        calls.append(("send_key", key))
-        return True
-
-    def fake_set_volume(_ip, volume):
-        calls.append(("set_volume", volume))
-        return True
-
-    monkeypatch.setattr(jobs.control, "power_action", fake_power_action)
-    monkeypatch.setattr(jobs.control, "play_preset", fake_play_preset)
-    monkeypatch.setattr(jobs.control, "send_key", fake_send_key)
-    monkeypatch.setattr(jobs.control, "set_volume", fake_set_volume)
-
-    jobs.auto_on_job(
-        speaker_name="Living Room",
-        preset=1,
-        volume=4,
-        source="AUX",
-        fade_in_duration=0,
-        force=True,
-    )
-
-    assert calls == [
-        ("send_key", "AUX_INPUT"),
-        ("set_volume", 0),
-        ("set_volume", 4),
-    ]
-
-
-def test_auto_on_job_active_without_force_does_not_interrupt(monkeypatch):
-    calls = []
-
-    monkeypatch.setattr(jobs.discovery, "get_device_ip", lambda _: "192.168.1.20")
-    monkeypatch.setattr(jobs.status, "get_now_playing", lambda _: {"status": "PLAYING"})
-
-    def fake_control_call(*_args, **_kwargs):
-        calls.append("called")
-        return True
-
-    monkeypatch.setattr(jobs.control, "power_action", fake_control_call)
-    monkeypatch.setattr(jobs.control, "play_preset", fake_control_call)
-    monkeypatch.setattr(jobs.control, "send_key", fake_control_call)
-    monkeypatch.setattr(jobs.control, "set_volume", fake_control_call)
-
-    jobs.auto_on_job(
-        speaker_name="Living Room",
-        preset=1,
-        volume=8,
-        source=None,
-        fade_in_duration=120,
-        force=False,
-    )
-
-    assert calls == []
-
-
-def test_auto_on_job_invalid_preset_and_volume_are_sanitized(monkeypatch):
-    calls = []
-
-    monkeypatch.setattr(jobs.discovery, "get_device_ip", lambda _: "192.168.1.20")
-    monkeypatch.setattr(jobs.status, "get_now_playing", lambda _: {"status": "STANDBY"})
-    monkeypatch.setattr(jobs.time, "sleep", lambda _: None)
-    monkeypatch.setattr(jobs.control, "power_action", lambda _ip: True)
-    monkeypatch.setattr(jobs.control, "send_key", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(jobs.control, "play_preset", lambda _ip, preset: calls.append(("play_preset", preset)))
-    monkeypatch.setattr(jobs.control, "set_volume", lambda _ip, volume: calls.append(("set_volume", volume)))
-
-    jobs.auto_on_job(
-        speaker_name="Living Room",
-        preset=99,
-        volume=250,
-        source=None,
-        fade_in_duration=0,
-        force=True,
-    )
-
-    assert calls == [
-        ("play_preset", 6),
-        ("set_volume", 0),
-        ("set_volume", 100),
-    ]
-
-
-def test_auto_off_job_invalid_current_volume_skips_fade_and_powers_off(monkeypatch):
-    calls = []
-
-    monkeypatch.setattr(jobs.discovery, "get_device_ip", lambda _: "192.168.1.20")
-    monkeypatch.setattr(jobs.status, "get_now_playing", lambda _: {"status": "PLAYING"})
-    monkeypatch.setattr(jobs.status, "get_volume", lambda _: "not-a-number")
-    monkeypatch.setattr(jobs.time, "sleep", lambda _: None)
-    monkeypatch.setattr(jobs.control, "set_volume", lambda *_args, **_kwargs: calls.append("set_volume"))
-    monkeypatch.setattr(jobs.control, "power_action", lambda _ip: calls.append("power_action"))
-
-    jobs.auto_off_job("Living Room", fade_out_duration=30)
-
-    assert calls == ["power_action"]
+    monkeypatch.setattr(jobs.playback, 'begin', lambda name: {'speaker': name})
+    monkeypatch.setattr(jobs.playback, 'run_off', lambda *args: calls.append(args))
+    jobs.auto_off_job('Room', fade_out_duration=30)
+    assert calls == [({'speaker': 'Room'}, 30)]
 
 
 def test_sanitize_config_normalizes_legacy_entries():
@@ -344,3 +202,138 @@ def test_submit_background_task_drops_task_when_pool_is_none(monkeypatch, caplog
         rec.levelname == "WARNING" and "task dropped" in rec.message
         for rec in caplog.records
     )
+
+
+
+def test_queue_on_coalesces_pending_double_click(monkeypatch):
+    jobs.playback.reset()
+    class Pool:
+        def submit(self, *args, **kwargs):
+            calls.append(args)
+            class Future:
+                def add_done_callback(self, cb):
+                    pass
+            return Future()
+    calls = []
+    monkeypatch.setattr(jobs, 'BACKGROUND_WORKER_POOL', Pool())
+    schedule = jobs.get_default_config()['Target Speaker 1'][0]
+    first = jobs.queue_on('Room', schedule, force=True)
+    second = jobs.queue_on('Room', schedule, force=True)
+    assert first['operation_id'] == second['operation_id']
+    assert len(calls) == 1
+    jobs.cancel_operation('Room')
+    calls[0][0](*calls[0][1:])
+    assert jobs.get_last_outcome('Room')['state'] == 'canceled'
+
+
+def test_worker_exception_finishes_operation(monkeypatch):
+    jobs.playback.reset()
+    op = jobs.playback.begin('Room')
+    def fail(_):
+        raise RuntimeError('private URL must not escape')
+    jobs._execute_operation(fail, op)
+    assert jobs.get_last_outcome('Room')['state'] == 'failed'
+    assert jobs.get_last_outcome('Room')['reason'] == 'internal_error'
+
+
+def test_explicit_speaker_identity_survives_normalization():
+    raw = jobs.get_default_config()
+    raw['Target Speaker 1'][0]['speaker_id'] = 'ABC123'
+    normalized = jobs.sanitize_config(raw)
+    assert normalized['Target Speaker 1'][0]['speaker_id'] == 'ABC123'
+
+
+def test_nonfinite_fades_are_bounded():
+    assert jobs._coerce_non_negative_float(float('inf'), 300) == 300
+    assert jobs._coerce_non_negative_float(float('nan'), 300) == 300
+    assert jobs._coerce_non_negative_float(99999999, 300) == jobs.playback.MAX_FADE_SECONDS
+
+
+def test_concurrent_run_now_admission_submits_once(monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    jobs.playback.reset()
+    calls = []
+    class Pool:
+        def submit(self, *args):
+            calls.append(args)
+            class Future:
+                def add_done_callback(self, callback):
+                    pass
+            return Future()
+    monkeypatch.setattr(jobs, 'BACKGROUND_WORKER_POOL', Pool())
+    schedule = jobs.get_default_config()['Target Speaker 1'][0]
+    barrier = threading.Barrier(2)
+    def request():
+        barrier.wait(timeout=2)
+        return jobs.queue_on('Room', schedule, force=True)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(request) for _ in range(2)]
+        results = [future.result(timeout=2) for future in futures]
+    assert len(calls) == 1
+    assert results[0]['operation_id'] == results[1]['operation_id']
+
+
+def scheduler_frames(monkeypatch, stamps, schedule):
+    import time
+    frames = [time.strptime(stamp, '%Y-%m-%d %H:%M') for stamp in stamps]
+    index = [0]
+    class Stop:
+        def is_set(self):
+            return index[0] >= len(frames)
+        def wait(self, _):
+            index[0] += 1
+    monkeypatch.setattr(jobs, '_stop_event', Stop())
+    monkeypatch.setattr(jobs, '_processed_occurrences', set())
+    monkeypatch.setattr(jobs, 'load_config', lambda: {'Room': [schedule]})
+    monkeypatch.setattr(jobs.time, 'localtime', lambda: frames[index[0]])
+    calls = []
+    monkeypatch.setattr(jobs, 'queue_on', lambda *a: calls.append('on'))
+    monkeypatch.setattr(jobs, 'queue_off', lambda *a: calls.append('off'))
+    jobs.run_scheduler_loop()
+    return calls
+
+
+def test_scheduler_skips_missed_minutes_and_paused_schedules(monkeypatch):
+    schedule = jobs.get_default_config()['Target Speaker 1'][0]
+    assert scheduler_frames(monkeypatch, ['2026-10-21 06:14', '2026-10-21 06:16'], schedule) == []
+    schedule['paused'] = True
+    assert scheduler_frames(monkeypatch, ['2026-10-21 06:15'], schedule) == []
+
+
+def test_fall_back_wall_minute_fires_once_per_date(monkeypatch):
+    schedule = jobs.get_default_config()['Target Speaker 1'][0]
+    schedule['on_time'] = '01:30'
+    assert scheduler_frames(monkeypatch, ['2026-11-01 01:29', '2026-11-01 01:30',
+                                          '2026-11-01 01:00', '2026-11-01 01:30'], schedule) == ['on']
+
+
+def test_spring_gap_has_no_catchup(monkeypatch):
+    schedule = jobs.get_default_config()['Target Speaker 1'][0]
+    schedule['on_time'] = '02:30'
+    assert scheduler_frames(monkeypatch, ['2026-03-08 01:59', '2026-03-08 03:00'], schedule) == []
+
+
+def test_next_run_has_offset_zone_and_skips_dst_gap(monkeypatch):
+    import os
+    import time
+    from datetime import datetime, timezone
+    previous = os.environ.get('TZ')
+    os.environ['TZ'] = 'America/New_York'
+    time.tzset()
+    try:
+        schedule = jobs.get_default_config()['Target Speaker 1'][0]
+        schedule.update(on_time='02:30', off_time=None)
+        monkeypatch.setattr(jobs, 'current_config', {'Room': [schedule]})
+        monkeypatch.setattr(jobs, '_processed_occurrences', set())
+        instant = datetime(2026, 3, 8, 6, 0, tzinfo=timezone.utc).timestamp()
+        monkeypatch.setattr(jobs.time, 'time', lambda: instant)
+        runtime = jobs.get_schedule_runtime('Room')[0]
+        assert runtime['timezone'] == 'America/New_York'
+        assert runtime['next_run'] == '2026-03-09T02:30:00-04:00'
+    finally:
+        if previous is None:
+            os.environ.pop('TZ', None)
+        else:
+            os.environ['TZ'] = previous
+        time.tzset()

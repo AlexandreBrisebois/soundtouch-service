@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 import json
 import time
@@ -6,6 +7,7 @@ import threading
 import queue
 import re
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from app.core.constants import (
@@ -13,12 +15,9 @@ from app.core.constants import (
     DEFAULT_FADE_OUT_DURATION_SECONDS,
     DEFAULT_PRESET,
     DEFAULT_VOLUME,
-    FADE_STATUS_RECHECK_STEP_INTERVAL,
     SCHEDULER_LOOP_INTERVAL_SECONDS,
-    SOURCE_SETTLE_DELAY_SECONDS,
-    SPEAKER_BOOT_DELAY_SECONDS,
 )
-from app.core import discovery, status, control
+from app.core import playback
 from app.core.models import ConfigDocument, ConfigMutation, Schedule
 
 CONFIG_FILE_PATH = Path(os.getenv("CONFIG_FILE", "config.json"))
@@ -37,6 +36,9 @@ _stop_event = threading.Event()
 _daemon_lock = threading.Lock()
 _config_worker_thread: threading.Thread | None = None
 _scheduler_thread: threading.Thread | None = None
+_queue_lock = threading.Lock()
+_processed_occurrences: set[tuple[str, str, str, str]] = set()
+_occurrence_lock = threading.Lock()
 
 
 def _log_with_fields(level: int, message: str, **fields: Any) -> None:
@@ -85,7 +87,7 @@ def _coerce_non_negative_float(value: Any, default: float) -> float:
         coerced = float(value)
     except (TypeError, ValueError):
         coerced = default
-    return max(0.0, coerced)
+    return min(playback.MAX_FADE_SECONDS, max(0.0, coerced)) if math.isfinite(coerced) else default
 
 
 def _normalize_time(value: Any) -> str | None:
@@ -163,7 +165,7 @@ def _normalize_schedule(schedule: Any, speaker_name: str, index: int) -> Schedul
         normalized_source = None
         preset = _coerce_int(schedule.get("preset", 1), 1, minimum=1, maximum=6)
 
-    return {
+    normalized: Schedule = {
         "name": name.strip(),
         "days": normalized_days,
         "on_time": on_time,
@@ -181,6 +183,9 @@ def _normalize_schedule(schedule: Any, speaker_name: str, index: int) -> Schedul
         ),
         "paused": bool(schedule.get("paused", False)),
     }
+    if isinstance(schedule.get('speaker_id'), str) and schedule['speaker_id'].strip():
+        normalized['speaker_id'] = schedule['speaker_id'].strip()
+    return normalized
 
 
 def sanitize_config(config: Any) -> SpeakerSchedules | None:
@@ -350,126 +355,129 @@ def config_io_worker() -> None:
         finally:
             config_queue.task_done()
 
-def auto_on_job(speaker_name: str, preset: int | None, volume: int, source: str | None = None, fade_in_duration: float = DEFAULT_FADE_IN_DURATION_SECONDS, force: bool = False) -> None:
-    logger.info("Auto-ON triggered for '%s'.", speaker_name)
-    target_ip = discovery.get_device_ip(speaker_name)
+def auto_on_job(speaker_name: str, preset: int | None, volume: int,
+                source: str | None = None,
+                fade_in_duration: float = DEFAULT_FADE_IN_DURATION_SECONDS,
+                force: bool = False) -> None:
+    op = playback.begin(speaker_name)
+    playback.run_on(op, _coerce_int(preset, DEFAULT_PRESET, 1, 6),
+                    _coerce_int(volume, DEFAULT_VOLUME, 0, 100), source,
+                    _coerce_non_negative_float(fade_in_duration, DEFAULT_FADE_IN_DURATION_SECONDS),
+                    force)
 
-    if not target_ip:
-        logger.warning("Speaker '%s' not found in cache or on network. Aborting auto-on.", speaker_name)
-        return
 
-    status_data = status.get_now_playing(target_ip)
-    speaker_status = _normalize_status(status_data.get("status"))
-    logger.info("Speaker '%s' current status is '%s'.", speaker_name, speaker_status)
-    
-    is_active = speaker_status.upper() not in ["STANDBY", "OFFLINE"]
+def auto_off_job(speaker_name: str,
+                 fade_out_duration: float = DEFAULT_FADE_OUT_DURATION_SECONDS) -> None:
+    op = playback.begin(speaker_name)
+    playback.run_off(op, fade_out_duration)
 
-    volume = _coerce_int(volume, DEFAULT_VOLUME, minimum=0, maximum=100)
-    fade_in_duration = _coerce_non_negative_float(fade_in_duration, DEFAULT_FADE_IN_DURATION_SECONDS)
-    
-    if is_active and not force:
-        logger.info("Speaker '%s' is already active. Ignoring ON event to prevent interruption.", speaker_name)
-        return
-        
-    if not is_active:
-        logger.info("Speaker '%s' is %s. Turning on.", speaker_name, speaker_status)
-        if control.power_action(target_ip):
-            # Wait a moment for speaker to boot and accept additional commands
-            time.sleep(SPEAKER_BOOT_DELAY_SECONDS)
-    else:
-        logger.info("Speaker '%s' is active, but force=True was provided. Proceeding with routine.", speaker_name)
 
-    if source == "AUX":
-        logger.info("Speaker '%s' switching to AUX input.", speaker_name)
-        control.send_key(target_ip, "AUX_INPUT")
-    else:
-        preset = _coerce_int(preset, DEFAULT_PRESET, minimum=1, maximum=6)
-        logger.info("Speaker '%s' playing preset %s.", speaker_name, preset)
-        control.play_preset(target_ip, preset)
+def _execute_operation(func: Any, op: playback.Operation, *args: Any) -> None:
+    try:
+        func(op, *args)
+    except Exception as exc:
+        playback.finish(op, 'failed', 'internal_error')
+        logger.error('Playback operation failed (%s).', type(exc).__name__)
 
-    # Give source selection a moment before starting fade.
-    time.sleep(SOURCE_SETTLE_DELAY_SECONDS)
 
-    logger.info("Speaker '%s' starting volume fade-in to %s over %ss.", speaker_name, volume, fade_in_duration)
-    # Always begin from 0 so manual trigger tests the configured fade profile.
-    control.set_volume(target_ip, 0)
+def queue_on(speaker_name: str, schedule: Schedule, force: bool = False) -> dict[str, Any] | None:
+    with _queue_lock:
+        return _queue_on_locked(speaker_name, schedule, force)
 
-    if fade_in_duration <= 0 or volume <= 0:
-        control.set_volume(target_ip, volume)
-        return
 
-    sleep_interval = fade_in_duration / volume
+def _queue_on_locked(speaker_name: str, schedule: Schedule, force: bool) -> dict[str, Any] | None:
+    previous = playback.last(speaker_name)
+    if previous and not previous['terminal'] and previous['schedule_name'] == schedule['name']:
+        return previous
+    if BACKGROUND_WORKER_POOL is None:
+        return None
+    op = playback.begin(speaker_name, schedule['name'], schedule.get('speaker_id'))
+    if not submit_background_task(_execute_operation, playback.run_on, op, schedule.get('preset'),
+                                  schedule['volume'], schedule.get('source'),
+                                  schedule['fade_in_duration'], force):
+        playback.finish(op, 'failed', 'worker_unavailable')
+        return None
+    return dict(op['outcome'])
 
-    for v in range(1, volume + 1):
-        time.sleep(sleep_interval)
 
-        if v % FADE_STATUS_RECHECK_STEP_INTERVAL == 0 or sleep_interval > FADE_STATUS_RECHECK_STEP_INTERVAL:
-            status_data = status.get_now_playing(target_ip)
-            if _normalize_status(status_data.get("status")).upper() == "STANDBY":
-                logger.info("Fade-in aborted for '%s': speaker was manually turned off mid-fade.", speaker_name)
-                return
+def queue_off(speaker_name: str, schedule: Schedule) -> dict[str, Any] | None:
+    if BACKGROUND_WORKER_POOL is None:
+        return None
+    op = playback.begin(speaker_name, schedule['name'], schedule.get('speaker_id'))
+    if not submit_background_task(_execute_operation, playback.run_off, op, schedule['fade_out_duration']):
+        playback.finish(op, 'failed', 'worker_unavailable')
+        return None
+    return dict(op['outcome'])
 
-        control.set_volume(target_ip, v)
 
-    logger.info("Speaker '%s' achieved target volume %s.", speaker_name, volume)
+def cancel_operation(speaker_name: str, reason: str = 'manual_override') -> None:
+    playback.cancel(speaker_name, reason)
 
-def auto_off_job(speaker_name: str, fade_out_duration: float = DEFAULT_FADE_OUT_DURATION_SECONDS) -> None:
-    logger.info("Auto-OFF triggered for '%s'.", speaker_name)
-    target_ip = discovery.get_device_ip(speaker_name)
 
-    if not target_ip:
-        logger.warning("Speaker '%s' not found in cache or on network. Aborting auto-off.", speaker_name)
-        return
+def manual_control(speaker_name: str, callback: Any) -> bool:
+    return playback.manual(speaker_name, callback)
 
-    status_data = status.get_now_playing(target_ip)
-    speaker_status = _normalize_status(status_data.get("status"))
-    logger.info("Speaker '%s' current status is '%s'.", speaker_name, speaker_status)
 
-    fade_out_duration = _coerce_non_negative_float(fade_out_duration, DEFAULT_FADE_OUT_DURATION_SECONDS)
-    
-    if speaker_status.upper() not in ["STANDBY", "OFFLINE"]:
-        logger.info("Speaker '%s' is active. Starting volume fade-out over %ss.", speaker_name, fade_out_duration)
-        
-        current_volume = status.get_volume(target_ip)
-        try:
-            current_volume = int(current_volume) if current_volume is not None else None
-        except (TypeError, ValueError):
-            current_volume = None
-        if current_volume is not None:
-            current_volume = max(0, min(100, current_volume))
-        if current_volume is not None and current_volume > 0 and fade_out_duration > 0:
-            sleep_interval = fade_out_duration / current_volume
-            for v in range(current_volume - 1, -1, -1):
-                time.sleep(sleep_interval)
-                
-                if v % FADE_STATUS_RECHECK_STEP_INTERVAL == 0 or sleep_interval > FADE_STATUS_RECHECK_STEP_INTERVAL:
-                    status_data = status.get_now_playing(target_ip)
-                    if _normalize_status(status_data.get("status")).upper() == "STANDBY":
-                        logger.info("Fade-out aborted for '%s': speaker was already turned off.", speaker_name)
-                        return
-                        
-                control.set_volume(target_ip, v)
-                
-        logger.info("Sending power off signal to '%s'.", speaker_name)
-        control.power_action(target_ip)
-    else:
-        logger.info("Speaker '%s' is already in standby/offline mode. No action needed.", speaker_name)
+def get_last_outcome(speaker_name: str) -> dict[str, Any] | None:
+    return playback.last(speaker_name)
+
+
+def get_schedule_runtime(speaker_name: str) -> list[dict[str, Any]]:
+    # Use the same server-local TZ as the existing scheduler. mktime with tm_isdst=-1
+    # determines the actual UTC offset; reject normalized spring-forward gap times.
+    now = time.time()
+    result = []
+    for schedule in get_current_config().get(speaker_name, []):
+        candidates = []
+        if not schedule['paused']:
+            today = datetime.fromtimestamp(now).date()
+            for offset in range(8):
+                day = today + timedelta(days=offset)
+                if schedule['days'] and day.strftime('%A').lower() not in schedule['days']:
+                    continue
+                for kind, value in (('on', schedule['on_time']), ('off', schedule['off_time'])):
+                    if not value:
+                        continue
+                    hour, minute = map(int, value.split(':'))
+                    key = (day.isoformat(), speaker_name, schedule['name'], kind + ':' + value)
+                    with _occurrence_lock:
+                        if key in _processed_occurrences:
+                            continue
+                    for is_dst in (0, 1):
+                        stamp = time.mktime((day.year, day.month, day.day, hour, minute, 0, 0, 0, is_dst))
+                        local = time.localtime(stamp)
+                        if (stamp > now and (local.tm_year, local.tm_mon, local.tm_mday,
+                                             local.tm_hour, local.tm_min)
+                                == (day.year, day.month, day.day, hour, minute)):
+                            candidates.append(stamp)
+        next_run = datetime.fromtimestamp(min(candidates)).astimezone().isoformat() if candidates else None
+        last = get_last_outcome(speaker_name)
+        result.append({'schedule_name': schedule['name'], 'paused': schedule['paused'],
+                       'next_run': next_run, 'timezone': os.getenv('TZ') or time.tzname[0],
+                       'last_outcome': last if last and last['schedule_name'] == schedule['name'] else None})
+    return result
 
 
 def _log_future_exception(future: Any) -> None:
     """Log any exception raised by a background task Future."""
+    if future.cancelled():
+        return
     exc = future.exception()
     if exc is not None:
-        logger.error("Background task raised an unhandled exception.", exc_info=exc)
+        logger.error("Background task failed (%s).", type(exc).__name__)
 
 
-def submit_background_task(func: Any, *args: Any, **kwargs: Any) -> None:
+def submit_background_task(func: Any, *args: Any, **kwargs: Any) -> bool:
     """Submit a background task onto the bounded worker pool."""
     if BACKGROUND_WORKER_POOL is None:
         logger.warning("Background worker pool is not running; task dropped.")
-        return
-    future = BACKGROUND_WORKER_POOL.submit(func, *args, **kwargs)
+        return False
+    try:
+        future = BACKGROUND_WORKER_POOL.submit(func, *args, **kwargs)
+    except RuntimeError:
+        return False
     future.add_done_callback(_log_future_exception)
+    return True
 
 
 def run_scheduler_loop() -> None:
@@ -480,14 +488,21 @@ def run_scheduler_loop() -> None:
         if isinstance(schedules, list):
             logger.info("Loaded %s schedule(s) for '%s': %s", len(schedules), speaker, [s.get('name') for s in schedules])
     last_processed_minute = None
+    processed_day = None
     
     while not _stop_event.is_set():
         now = time.localtime()
         current_time_str = time.strftime("%H:%M", now)
         current_day = time.strftime("%A", now).lower()
         
-        if current_time_str != last_processed_minute:
-            last_processed_minute = current_time_str
+        day_key = time.strftime('%Y-%m-%d', now)
+        if processed_day != day_key:
+            with _occurrence_lock:
+                _processed_occurrences.clear()
+            processed_day = day_key
+        wall_minute = (day_key, current_time_str)
+        if wall_minute != last_processed_minute:
+            last_processed_minute = wall_minute
             
             # Fast in-memory check instead of disk read
             config = current_config
@@ -508,19 +523,25 @@ def run_scheduler_loop() -> None:
                     on_time = schedule.get("on_time")
                     off_time = schedule.get("off_time")
                     
-                    if current_time_str == on_time:
+                    on_key = (day_key, speaker_name, schedule['name'], 'on:' + current_time_str)
+                    off_key = (day_key, speaker_name, schedule['name'], 'off:' + current_time_str)
+                    if current_time_str == on_time and on_key not in _processed_occurrences:
+                        with _occurrence_lock:
+                            _processed_occurrences.add(on_key)
                         preset = schedule.get("preset", DEFAULT_PRESET)
                         volume = schedule.get("volume", DEFAULT_VOLUME)
                         source = schedule.get("source")
                         fade_in_duration = schedule.get("fade_in_duration", DEFAULT_FADE_IN_DURATION_SECONDS)
                         source_log = f"Source: {source}" if source else f"Preset: {preset}"
                         logger.info("[%s] '%s' for '%s' ON event triggered (%s, target volume=%s, fade=%ss).", current_time_str, schedule.get('name'), speaker_name, source_log, volume, fade_in_duration)
-                        submit_background_task(auto_on_job, speaker_name, preset, volume, source, fade_in_duration)
+                        queue_on(speaker_name, schedule)
                         
-                    if current_time_str == off_time:
+                    if current_time_str == off_time and off_key not in _processed_occurrences:
+                        with _occurrence_lock:
+                            _processed_occurrences.add(off_key)
                         fade_out_duration = schedule.get("fade_out_duration", DEFAULT_FADE_OUT_DURATION_SECONDS)
                         logger.info("[%s] '%s' for '%s' OFF event triggered (fade=%ss).", current_time_str, schedule.get('name'), speaker_name, fade_out_duration)
-                        submit_background_task(auto_off_job, speaker_name, fade_out_duration)
+                        queue_off(speaker_name, schedule)
                     
         _stop_event.wait(SCHEDULER_LOOP_INTERVAL_SECONDS)
 
@@ -550,6 +571,7 @@ def shutdown_daemon(timeout: float = 3.0) -> None:
 
     with _daemon_lock:
         _stop_event.set()
+        playback.reset()
         config_queue.put(None)
 
         if _config_worker_thread is not None:
@@ -569,3 +591,4 @@ def get_current_config() -> SpeakerSchedules:
     if not current_config:
         current_config = load_config() or {}
     return current_config
+
