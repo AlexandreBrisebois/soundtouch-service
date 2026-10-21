@@ -1,0 +1,418 @@
+"""Cancelable, conservative per-speaker playback operations.
+
+Only fresh device readback establishes speaker-reported Playing, never audibility.
+No command is retried. Failed/ambiguous writes leave volume as-is, without rollback.
+"""
+import threading
+import time
+import uuid
+from typing import Any, Callable, TypedDict
+
+from app.core import control, discovery, status
+
+START_DEADLINE_SECONDS = 30.0
+MAX_FADE_SECONDS = 3600.0
+TERMINAL = {'completed', 'playing', 'failed', 'unknown', 'skipped', 'canceled'}
+
+
+class Operation(TypedDict):
+    speaker: str
+    outcome: dict[str, Any]
+    canceled: threading.Event
+    changed: threading.Event
+    device_id: str | None
+    expected: dict[str, str] | None
+    expected_volume: int | None
+    deadline: float
+    mode: str
+    initial_state: str
+    verified: bool
+    pending_volume: int | None
+
+
+_lock = threading.RLock()
+_operations: dict[str, Operation] = {}
+_write_locks: dict[str, threading.RLock] = {}
+_bindings: dict[str, str] = {}
+_device_owners: dict[str, Operation] = {}
+
+
+def reset() -> None:
+    """Clear volatile state; no pending operation is resumed after restart."""
+    with _lock:
+        for op in _operations.values():
+            op['canceled'].set()
+            op['changed'].set()
+        _operations.clear()
+        _write_locks.clear()
+        _bindings.clear()
+        _device_owners.clear()
+
+
+def last(speaker: str) -> dict[str, Any] | None:
+    with _lock:
+        op = _operations.get(speaker)
+        return dict(op['outcome']) if op else None
+
+
+def current(op: Operation) -> bool:
+    with _lock:
+        return _operations.get(op['speaker']) is op and not op['canceled'].is_set()
+
+
+def finish(op: Operation, state: str, reason: str, observed_at: float | None = None) -> None:
+    with _lock:
+        if not current(op):
+            return
+        if op['outcome']['terminal']:
+            return
+        if state in TERMINAL:
+            op['verified'] = False
+        op['outcome'].update(state=state, reason=reason, updated_at=time.time(),
+                             observed_at=observed_at, terminal=state in TERMINAL)
+
+
+def cancel(speaker: str, reason: str = 'manual_override') -> None:
+    with _lock:
+        op = _operations.get(speaker)
+        # Also invalidate another name's operation on this already-bound device.
+        owner = _device_owners.get(_bindings.get(speaker, ''))
+        for target in (op, owner):
+            if target is not None:
+                target['canceled'].set()
+                target['changed'].set()
+                target['verified'] = False
+                if target['outcome']['terminal']:
+                    continue
+                target['outcome'].update(state='canceled', reason=reason,
+                                          updated_at=time.time(), terminal=True)
+
+
+def begin(speaker: str, schedule_name: str | None = None,
+          device_id: str | None = None) -> Operation:
+    with _lock:
+        cancel(speaker, 'superseded')
+        now = time.time()
+        op: Operation = {
+            'speaker': speaker, 'canceled': threading.Event(), 'changed': threading.Event(),
+            'device_id': device_id or _bindings.get(speaker),
+            'expected': None, 'expected_volume': None,
+            'deadline': time.monotonic() + START_DEADLINE_SECONDS,
+            'mode': 'on', 'initial_state': '', 'verified': False, 'pending_volume': None,
+            'outcome': {'operation_id': uuid.uuid4().hex, 'schedule_name': schedule_name,
+                        'state': 'accepted', 'reason': 'queued', 'accepted_at': now,
+                        'updated_at': now, 'observed_at': None, 'terminal': False,
+                        'audible_confirmed': False, 'in_flight': False},
+        }
+        _operations[speaker] = op
+        return op
+
+
+def wait(op: Operation, delay: float) -> bool:
+    """Interruptible wait, including long configured fades."""
+    until = time.monotonic() + max(0.0, delay)
+    while current(op):
+        remaining = until - time.monotonic()
+        if remaining <= 0:
+            return True
+        op['changed'].wait(min(5.0, remaining))
+        op['changed'].clear()
+        if not current(op):
+            return False
+        if op['verified'] and not _guard(op):
+            return False
+    return False
+
+
+def _resolve(op: Operation) -> dict[str, str] | None:
+    if not current(op):
+        return None
+    device = discovery.resolve_device(op['speaker'], op['device_id'])
+    if not device or not device.get('device_id'):
+        finish(op, 'unknown', 'speaker_identity_unavailable')
+        return None
+    identity = device['device_id']
+    if op['device_id'] is not None and identity != op['device_id']:
+        finish(op, 'unknown', 'speaker_identity_changed')
+        return None
+    with _lock:
+        if not current(op):
+            return None
+        previous = _device_owners.get(identity)
+        if previous is not None and previous is not op and current(previous):
+            cancel(previous['speaker'], 'superseded')
+        _bindings[op['speaker']] = identity
+        op['device_id'] = identity
+        _device_owners[identity] = op
+        _write_locks.setdefault(identity, threading.RLock())
+    return device
+
+
+def _budget(op: Operation, maximum: float = 5.0) -> float:
+    return max(0.0, min(maximum, op['deadline'] - time.monotonic()))
+
+
+def _address(op: Operation, verify: bool = True) -> str | None:
+    """Resolve current address; writes independently verify stable device identity."""
+    if not current(op):
+        return None
+    if time.monotonic() >= op['deadline']:
+        finish(op, 'unknown', 'operation_deadline')
+        return None
+    device = discovery.resolve_device(op['speaker'], op['device_id'])
+    if not device or (verify and status.get_device_id(
+            device['ip'], timeout=_budget(op)) != op['device_id']):
+        finish(op, 'unknown', 'speaker_identity_unavailable')
+        return None
+    if time.monotonic() >= op['deadline']:
+        finish(op, 'unknown', 'operation_deadline')
+        return None
+    return device['ip'] if current(op) else None
+
+
+def _write(op: Operation, callback: Callable[[str], bool]) -> bool:
+    if not current(op):
+        return False
+    key = op['device_id'] or op['speaker']
+    with _lock:
+        mutex = _write_locks.setdefault(key, threading.RLock())
+    with mutex:
+        if op['verified'] and op['changed'].is_set():
+            op['changed'].clear()
+            if not _guard(op):
+                return False
+        ip = _address(op)
+        if ip is None or not current(op):
+            return False
+        # Dispatch reservation is atomic with cancellation. The reserved bounded
+        # command may finish; no later command can reserve after cancellation.
+        with _lock:
+            if not current(op):
+                return False
+            op['outcome']['in_flight'] = True
+        try:
+            confirmed = callback(ip)
+        finally:
+            with _lock:
+                op['outcome']['in_flight'] = False
+        if not confirmed:
+            # A timeout or a failed key release may have executed at the device.
+            finish(op, 'unknown', 'command_not_confirmed')
+            return False
+        return current(op)
+
+
+def manual(speaker: str, callback: Callable[[str], bool]) -> bool:
+    """Cancel first, resolve and verify the current address inside the write lock."""
+    cancel(speaker)
+    with _lock:
+        bound = _bindings.get(speaker)
+    device = discovery.resolve_device(speaker, bound)
+    if not device or not device.get('device_id'):
+        return False
+    identity = device['device_id']
+    with _lock:
+        owner = _device_owners.get(identity)
+        if owner:
+            cancel(owner['speaker'])
+        _bindings[speaker] = identity
+        mutex = _write_locks.setdefault(identity, threading.RLock())
+    with mutex:
+        device = discovery.resolve_device(speaker, identity)
+        if not device or status.get_device_id(device['ip']) != identity:
+            return False
+        return bool(callback(device['ip']))
+
+
+def _read(op: Operation) -> dict[str, Any] | None:
+    ip = _address(op, verify=False)
+    if ip is None:
+        return None
+    data = status.get_now_playing(ip, timeout=_budget(op))
+    if not current(op):
+        return None
+    if data.get('device_id') != op['device_id']:
+        finish(op, 'unknown', 'playback_identity_unavailable')
+        return None
+    if not isinstance(data.get('observed_at'), (int, float)):
+        finish(op, 'unknown', 'playback_observation_unavailable')
+        return None
+    if (data.get('status', '').upper() not in
+            {'STANDBY', 'PLAYING', 'PAUSED', 'BUFFERING', 'STOPPED'}
+            or data.get('source_type') in {None, '', 'UNKNOWN'}):
+        finish(op, 'unknown', 'playback_observation_unavailable')
+        return None
+    return data
+
+
+def matches(expected: dict[str, str], data: dict[str, Any]) -> bool:
+    if expected.get('source') == 'AUX':
+        return data.get('source_type') == 'AUX'
+    actual = data.get('content_identity') or {}
+    # A source alone cannot distinguish two presets. Location is opaque and not logged.
+    return bool(expected.get('source') and expected.get('location')) and all(
+        actual.get(key) == value for key, value in expected.items() if value
+    )
+
+
+def _same_session(op: Operation, data: dict[str, Any]) -> bool:
+    expected = op['expected'] or {}
+    if op['mode'] == 'off':
+        actual = data.get('content_identity') or {'source': data.get('source_type', '')}
+        return (bool(expected.get('source')) and actual == expected
+                and data.get('status', '').upper() == op['initial_state'])
+    return matches(expected, data) and data.get('status', '').upper() == 'PLAYING'
+
+
+def observe_external(speaker: str, data: dict[str, Any]) -> None:
+    """Wake the owner to reconcile fresh reads, never trust delayed event echoes.
+
+    WebSocket events can arrive out of order, including Wisp's own old volume or
+    source notifications. They prompt a fresh guard before the next write rather
+    than themselves establishing either success or a manual override.
+    """
+    with _lock:
+        op = _operations.get(speaker)
+        if op and current(op) and op['verified']:
+            op['changed'].set()
+
+
+def _guard(op: Operation) -> bool:
+    """Fresh content/transport/volume read before each fade write; manual changes win."""
+    data = _read(op)
+    if data is None:
+        return False
+    if not _same_session(op, data):
+        finish(op, 'canceled', 'playback_changed', data.get('observed_at'))
+        return False
+    ip = _address(op, verify=False)
+    if ip is None:
+        return False
+    volume = status.get_volume(ip, timeout=_budget(op))
+    if volume is None:
+        finish(op, 'unknown', 'volume_observation_unavailable')
+        return False
+    if volume != op['expected_volume']:
+        finish(op, 'canceled', 'volume_changed')
+        return False
+    return current(op)
+
+
+def _volume(op: Operation, value: int) -> bool:
+    op['pending_volume'] = value
+    if not _write(op, lambda ip: control.set_volume(ip, value, timeout=_budget(op, 3.0))):
+        op['pending_volume'] = None
+        return False
+    ip = _address(op)
+    if ip is None:
+        return False
+    observed = status.get_volume(ip, timeout=_budget(op))
+    if observed != value:
+        finish(op, 'unknown', 'volume_not_confirmed')
+        return False
+    op['expected_volume'] = value
+    op['pending_volume'] = None
+    return current(op)
+
+
+def run_on(op: Operation, preset: int | None, volume: int, source: str | None = None,
+           fade_in_duration: float = 300, force: bool = False) -> None:
+    if not current(op):
+        return
+    finish(op, 'starting', 'checking_speaker')
+    if _resolve(op) is None:
+        return
+    data = _read(op)
+    if data is None:
+        return
+    if data.get('status', '').upper() != 'STANDBY' and not force:
+        finish(op, 'skipped', 'speaker_active', data.get('observed_at'))
+        return
+    ip = _address(op)
+    if ip is None:
+        return
+    expected = {'source': 'AUX'} if source == 'AUX' else status.get_preset_identity(ip, preset or 1, timeout=_budget(op))
+    if not expected or (source != 'AUX' and not expected.get('location')):
+        finish(op, 'unknown', 'preset_identity_unavailable')
+        return
+    op['expected'] = expected
+    # Quiet the existing source BEFORE anything that might start playback. Do not
+    # restore volume on failure: that could blast the old or externally selected source.
+    if not _volume(op, 0):
+        return
+    # PRESET and AUX keys request the intended source directly, avoiding a POWER
+    # toggle that could resume the wrong source. Firmware behavior is qualified separately.
+    selected = _write(op, lambda ip: control.send_key(ip, 'AUX_INPUT', timeout=_budget(op, 3.0)) if source == 'AUX'
+                      else control.play_preset(ip, preset or 1, timeout=_budget(op, 3.0)))
+    if not selected:
+        return
+    while current(op) and time.monotonic() < op['deadline']:
+        data = _read(op)
+        if data is None:
+            return
+        if matches(expected, data) and data.get('status', '').upper() == 'PLAYING':
+            break
+        if not wait(op, 0.25):
+            return
+    else:
+        finish(op, 'unknown', 'playback_not_verified')
+        return
+    op['verified'] = True
+    duration = min(MAX_FADE_SECONDS, max(0.0, fade_in_duration))
+    op['deadline'] = time.monotonic() + duration + 120.0
+    steps = range(1, volume + 1) if duration > 0 else [volume]
+    fade_started = time.monotonic()
+    for value in steps:
+        due = fade_started + duration * value / max(volume, 1)
+        if not wait(op, max(0.0, due - time.monotonic())) or not _guard(op):
+            return
+        if not _volume(op, value):
+            return
+    if not _guard(op):
+        return
+    finish(op, 'playing', 'speaker_reported_playing', data.get('observed_at'))
+
+
+def run_off(op: Operation, fade_out_duration: float = 60) -> None:
+    """Preserve existing OFF semantics, but never act after detected takeover."""
+    if not current(op):
+        return
+    op['mode'] = 'off'
+    finish(op, 'starting', 'checking_speaker')
+    if _resolve(op) is None:
+        return
+    data = _read(op)
+    if data is None:
+        return
+    if data.get('status', '').upper() == 'STANDBY':
+        finish(op, 'skipped', 'already_standby', data.get('observed_at'))
+        return
+    op['initial_state'] = data.get('status', '').upper()
+    op['expected'] = data.get('content_identity') or {'source': data.get('source_type', '')}
+    ip = _address(op)
+    if ip is None:
+        return
+    volume = status.get_volume(ip, timeout=_budget(op))
+    if volume is None:
+        finish(op, 'unknown', 'volume_observation_unavailable')
+        return
+    op['expected_volume'] = volume
+    op['verified'] = True
+    duration = min(MAX_FADE_SECONDS, max(0.0, fade_out_duration))
+    op['deadline'] = time.monotonic() + duration + 120.0
+    fade_started = time.monotonic()
+    for value in range(volume - 1, -1, -1) if duration > 0 else []:
+        due = fade_started + duration * (volume - value) / max(volume, 1)
+        if not wait(op, max(0.0, due - time.monotonic())) or not _guard(op):
+            return
+        if not _volume(op, value):
+            return
+    if not _guard(op):
+        return
+    if not _write(op, lambda ip: control.power_action(ip, timeout=_budget(op, 3.0))):
+        return
+    data = _read(op)
+    if data and data.get('status', '').upper() == 'STANDBY':
+        finish(op, 'completed', 'speaker_reported_standby', data.get('observed_at'))
+    elif data:
+        finish(op, 'unknown', 'standby_not_verified', data.get('observed_at'))

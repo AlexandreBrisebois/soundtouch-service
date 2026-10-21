@@ -3,6 +3,7 @@ from typing_extensions import NotRequired, Required
 
 
 class Schedule(TypedDict):
+    speaker_id: NotRequired[str]
     name: str
     days: list[str] | None
     on_time: str | None
@@ -16,6 +17,7 @@ class Schedule(TypedDict):
 
 
 class SchedulePayload(TypedDict, total=False):
+    speaker_id: str
     name: str
     previous_name: str | None
     days: list[str] | None
@@ -40,3 +42,4 @@ class ConfigMutation(TypedDict):
 class ConfigDocument(TypedDict):
     version: int
     schedules: dict[str, list[Schedule]]
+
