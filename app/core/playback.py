@@ -317,7 +317,7 @@ def _volume(op: Operation, value: int) -> bool:
 
 
 def run_on(op: Operation, preset: int | None, volume: int, source: str | None = None,
-           fade_in_duration: float = 300, force: bool = False, favorite_id: str | None = None) -> None:
+           fade_in_duration: float = 300, force: bool = False, favorite_id: str | None = None, station_id: str | None = None, allow_archived_station: bool = False) -> None:
     if not current(op):
         return
     finish(op, 'starting', 'checking_speaker')
@@ -332,7 +332,20 @@ def run_on(op: Operation, preset: int | None, volume: int, source: str | None = 
     ip = _address(op)
     if ip is None:
         return
-    expected = {'source': 'AUX'} if source == 'AUX' else status.get_preset_identity(ip, preset or 1, timeout=_budget(op))
+    if station_id:
+        from app.core import favorites, library
+        try:
+            station_content = favorites.station_content(station_id, allow_removed=allow_archived_station)
+            expected = {key: station_content[key] for key in ('source', 'sourceAccount', 'location', 'type') if station_content.get(key)}
+            ready = any(item['source'] == 'LOCAL_INTERNET_RADIO' and item['ready'] for item in library.read_sources(ip))
+            if not ready or '/select' not in favorites.capabilities(ip):
+                finish(op, 'unknown', 'station_source_unavailable')
+                return
+        except (ValueError, KeyError, TypeError):
+            finish(op, 'unknown', 'station_unavailable')
+            return
+    else:
+        expected = {'source': 'AUX'} if source == 'AUX' else status.get_preset_identity(ip, preset or 1, timeout=_budget(op))
     if not expected or (source != 'AUX' and not expected.get('location')):
         finish(op, 'unknown', 'preset_identity_unavailable')
         return
@@ -373,7 +386,7 @@ def run_on(op: Operation, preset: int | None, volume: int, source: str | None = 
         return
     # PRESET and AUX keys request the intended source directly, avoiding a POWER
     # toggle that could resume the wrong source. Firmware behavior is qualified separately.
-    selected = _write(op, lambda ip: control.send_key(ip, 'AUX_INPUT', timeout=_budget(op, 3.0)) if source == 'AUX'
+    selected = _write(op, lambda ip: control.select_content(ip, station_content, timeout=_budget(op, 3.0)) if station_id else control.send_key(ip, 'AUX_INPUT', timeout=_budget(op, 3.0)) if source == 'AUX'
                       else control.play_preset(ip, preset or 1, timeout=_budget(op, 3.0)))
     if not selected:
         return

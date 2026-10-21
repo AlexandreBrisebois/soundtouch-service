@@ -185,6 +185,10 @@ def _normalize_schedule(schedule: Any, speaker_name: str, index: int) -> Schedul
     }
     if isinstance(schedule.get('speaker_id'), str) and schedule['speaker_id'].strip():
         normalized['speaker_id'] = schedule['speaker_id'].strip()
+    if isinstance(schedule.get('station_id'), str) and schedule['station_id']:
+        normalized['station_id'] = schedule['station_id']
+        normalized['preset'] = None
+        normalized['source'] = None
     if isinstance(schedule.get('favorite_id'), str) and schedule['favorite_id']:
         normalized['favorite_id'] = schedule['favorite_id']
     return normalized
@@ -394,7 +398,7 @@ def _queue_on_locked(speaker_name: str, schedule: Schedule, force: bool) -> dict
     if BACKGROUND_WORKER_POOL is None:
         return None
     op = playback.begin(speaker_name, schedule['name'], schedule.get('speaker_id'))
-    extra = [schedule['favorite_id']] if schedule.get('favorite_id') else []
+    extra = [None, schedule['station_id'], True] if schedule.get('station_id') else ([schedule['favorite_id']] if schedule.get('favorite_id') else [])
     if not submit_background_task(_execute_operation, playback.run_on, op, schedule.get('preset'),
                                   schedule['volume'], schedule.get('source'),
                                   schedule['fade_in_duration'], force, *extra):
@@ -595,3 +599,19 @@ def get_current_config() -> SpeakerSchedules:
         current_config = load_config() or {}
     return current_config
 
+
+
+def queue_station(speaker_name: str, speaker_id: str, station_id: str) -> dict[str, Any] | None:
+    """Manual station play shares cancellation/serialization with routines."""
+    with _queue_lock:
+        name = 'Station ' + station_id
+        previous = playback.last(speaker_name)
+        if previous and not previous['terminal'] and previous['schedule_name'] == name:
+            return previous
+        if BACKGROUND_WORKER_POOL is None:
+            return None
+        op = playback.begin(speaker_name, name, speaker_id)
+        if not submit_background_task(_execute_operation, playback.run_on, op, None, 5, None, 2, True, None, station_id):
+            playback.finish(op, 'failed', 'worker_unavailable')
+            return None
+        return dict(op['outcome'])

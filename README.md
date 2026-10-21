@@ -210,4 +210,4 @@ manual priority, optional stable speaker IDs, failure behavior and remaining har
 
 ### Native presets (draft qualification)
 
-Browse a NAS library already registered on a speaker, review a physical-button assignment, and bind a routine to that favorite. Compatible radio sources can use a Wisp-hosted metadata descriptor. Hardware qualification is still required; readiness and readback do not prove audible playback. See [setup, safety and qualification](docs/native-presets.md) before changing an existing button.
+Keep an independent Stations library with Add, Remove, Play quietly and Assign to preset. Browse a NAS library already registered on a speaker, review a physical-button assignment, and bind a routine to that favorite. Compatible radio sources can use a Wisp-hosted metadata descriptor. Hardware qualification is still required; readiness and readback do not prove audible playback. See [setup, safety and qualification](docs/native-presets.md) before changing an existing button.

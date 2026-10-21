@@ -273,3 +273,66 @@ def test_explicit_conflicting_type_never_confirms_or_binds(rig, monkeypatch):
     assert result['state'] == 'unknown'
     assert library.same_content(ITEM, {key: value for key, value in ITEM.items() if key != 'type'})
     assert not library.same_content(ITEM, {**ITEM, 'type': 'track'})
+
+
+def test_station_library_exceeds_six_without_speaker_commands(rig):
+    saved = [favorites.add_station(f'Station {i}', f'https://radio.example/{i}') for i in range(7)]
+    assert len(favorites.stations()) == 7
+    assert len({item['id'] for item in saved}) == 7
+    assert not rig[1]
+    assert all('slot' not in item and 'speaker_id' not in item for item in saved)
+
+
+def test_station_duplicate_does_not_create_second_record(rig):
+    favorites.add_station('One', 'https://radio.example/live')
+    with pytest.raises(ValueError, match='already'):
+        favorites.add_station('Other name', 'https://radio.example/live')
+    assert len(favorites.stations()) == 1
+
+
+def test_station_removal_preserves_descriptor_and_physical_favorite(rig, monkeypatch):
+    monkeypatch.setenv('WISP_BASE_URL', 'http://wisp.local:9001')
+    monkeypatch.setattr(library, 'read_sources', lambda _: [{'source': 'LOCAL_INTERNET_RADIO', 'ready': True}])
+    saved = favorites.add_station('Radio', 'https://radio.example/live')
+    plan = favorites.plan('Bedroom', {'station_id': saved['id'], 'name': 'Morning', 'slot': 1})
+    favorite = favorites.confirm('Bedroom', plan['plan_id'])['favorite']
+    assert favorites.get(favorite['id'])['content']['location'].endswith('/api/radio/' + favorite['id'])
+    favorites.remove_station(saved['id'])
+    assert not favorites.stations()
+    assert len(rig[1]) == 1
+    assert favorites.station_descriptor(saved['id'])['audio']['streamUrl'] == 'https://radio.example/live'
+    assert favorites.descriptor(favorite['id'])['audio']['streamUrl'] == 'https://radio.example/live'
+    assert favorites.schedule_binding(favorite['id'], 'Bedroom')['id'] == favorite['id']
+    assert favorites.station_content(saved['id'], allow_removed=True)['location'].endswith('/api/stations/' + saved['id'] + '/stream')
+    with pytest.raises(ValueError, match='not found'):
+        favorites.station_content(saved['id'])
+
+
+def test_station_add_and_remove_require_json_and_confirmation(rig):
+    app = Flask(__name__)
+    app.register_blueprint(favorites_bp)
+    client = app.test_client()
+    result = client.post('/api/stations', json={'name': 'Radio', 'url': 'https://radio.example/live'})
+    assert result.status_code == 201
+    id = result.json['station']['id']
+    assert client.delete('/api/stations/' + id, json={}).status_code == 400
+    assert len(client.get('/api/stations').json['stations']) == 1
+    assert client.delete('/api/stations/' + id, json={'confirmed': True}).status_code == 200
+    assert client.get('/api/stations/' + id + '/stream').status_code == 200
+    assert client.get('/api/stations').json['stations'] == []
+
+
+def test_station_direct_play_pins_device_without_preset_mutation(rig, monkeypatch):
+    from app.api import favorites as api
+    monkeypatch.setenv('WISP_BASE_URL', 'http://wisp.local:9001')
+    item = favorites.add_station('Radio', 'https://radio.example/live')
+    calls = []
+    monkeypatch.setattr(api.jobs, 'queue_station', lambda *args: calls.append(args) or {'state': 'accepted'})
+    app = Flask(__name__)
+    app.register_blueprint(favorites_bp)
+    client = app.test_client()
+    endpoint = '/api/Bedroom/stations/' + item['id'] + '/play'
+    assert client.post(endpoint, json={}).status_code == 400
+    assert client.post(endpoint, json={'confirmed': True}).status_code == 202
+    assert calls == [('Bedroom', 'ABC', item['id'])]
+    assert not rig[1]

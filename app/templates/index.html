@@ -22,6 +22,8 @@
   <link rel="stylesheet" href="/app-static/styles.css">
   <link rel="stylesheet" href="/app-static/presets.css">
   <script src="/app-static/presets.js"></script>
+  <link rel="stylesheet" href="/app-static/stations.css">
+  <script src="/app-static/stations.js"></script>
   <style>
     [hidden] { display: none !important; }
     #btn-cancel-operation { padding: 9px 12px; }
@@ -74,6 +76,7 @@
     </div>
 
     <div class="scroll-body" id="hub-body">
+      <button class="preset-action" id="btn-hub-stations" type="button">Stations</button>
       <div class="section-label" id="hub-section-label">Speakers</div>
       <div class="spinner" id="hub-spinner"></div>
       <div id="speaker-list"></div>
@@ -114,6 +117,7 @@
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         Add Schedule
       </button>
+      <button class="preset-action" id="btn-speaker-stations" type="button">Stations</button>
       <button class="preset-action" id="btn-manage-presets" type="button" aria-expanded="false" aria-controls="presets-panel">Manage speaker presets</button>
       <section class="preset-panel" id="presets-panel" hidden aria-labelledby="presets-title">
         <div class="preset-panel-header">
@@ -223,6 +227,11 @@
       </div>
 
       <div class="form-group">
+        <label class="form-label" for="f-station">Saved station <span class="form-label-optional">(optional)</span></label>
+        <select class="form-input" id="f-station" aria-describedby="station-schedule-help"><option value="">Use a favorite, numbered preset or AUX</option></select>
+        <p class="preset-help" id="station-schedule-help">A station can play on this schedule without occupying a speaker button. Wisp must stay available.</p>
+      </div>
+      <div class="form-group">
         <label class="form-label" for="f-favorite">Saved favorite <span class="form-label-optional">(optional)</span></label>
         <select class="form-input" id="f-favorite"><option value="">Use a numbered preset or AUX</option></select>
         <p class="preset-help" id="favorite-schedule-help">A saved favorite checks its button assignment before a scheduled start.</p>
@@ -276,6 +285,36 @@
     </div>
   </div>
 
+  <div id="view-stations" class="view">
+    <div class="header">
+      <button class="header-back" id="btn-stations-back" type="button">‹ <span id="stations-back-label">Speakers</span></button>
+      <h1 class="header-title" id="stations-title" tabindex="-1">Stations</h1>
+    </div>
+    <div class="scroll-body stations-body">
+      <p class="preset-help">Your radio library is separate from the six speaker buttons. Saving a station does not start playback or change any preset.</p>
+      <label class="form-label" for="stations-speaker">Play or assign on</label>
+      <select class="form-input" id="stations-speaker" aria-describedby="stations-speaker-help"></select>
+      <p class="preset-help" id="stations-speaker-help">Choose a speaker to play a station or assign it to a button.</p>
+      <p id="stations-message" role="status" aria-live="polite" aria-atomic="true"></p>
+      <button class="preset-action" id="stations-refresh" type="button">Refresh stations</button>
+      <div id="stations-confirmation" class="preset-confirmation" hidden>
+        <p id="stations-confirm-text" class="preset-help"></p>
+        <button class="preset-action" id="stations-confirm" type="button"></button>
+        <button class="preset-action" id="stations-cancel" type="button">Cancel</button>
+      </div>
+      <h2 class="section-label">Saved stations</h2>
+      <div id="stations-list"></div>
+      <form id="stations-add-form" class="station-add">
+        <h2>Add a station</h2>
+        <label class="form-label" for="station-name">Station name</label>
+        <input class="form-input" id="station-name" type="text" maxlength="100" required autocomplete="off">
+        <label class="form-label" for="station-url">Direct audio stream URL</label>
+        <input class="form-input" id="station-url" type="url" inputmode="url" maxlength="2048" required autocomplete="off" spellcheck="false" placeholder="https://radio.example/live.mp3" aria-describedby="station-url-help">
+        <p class="preset-help" id="station-url-help">Use a public http or https audio stream, not a station webpage. Credentials, query parameters and fragments are not supported. Stream compatibility is not guaranteed. Wisp must stay available for playback and radio presets.</p>
+        <button class="preset-action" id="stations-add" type="submit">Save station</button>
+      </form>
+    </div>
+  </div>
 </div><!-- #app -->
 
 <!-- ─── Overlays / Sheets ──────────────────────────────────────────── -->
@@ -359,10 +398,12 @@ const views = {
   hub:     document.getElementById('view-hub'),
   speaker: document.getElementById('view-speaker'),
   form:    document.getElementById('view-form'),
+  stations: document.getElementById('view-stations'),
 };
 
 function showView(name) {
   if (window.wispPresets) window.wispPresets.onViewChange(name);
+  if (window.wispStations) window.wispStations.onViewChange(name);
   activeView = name;
   clearTimeout(playbackRefreshTimer);
   playbackRefreshGeneration += 1;
@@ -670,7 +711,7 @@ function renderSchedules() {
     const isPaused = !!s.paused;
     const days = formatDays(s.days || []);
     const vol  = s.volume != null ? `Vol ${s.volume}` : '';
-    const pre  = s.preset  != null ? `Preset ${s.preset}` : (s.source || '');
+    const pre  = s.station_id ? 'Saved station' : s.preset  != null ? `Preset ${s.preset}` : (s.source || '');
     const meta = [days, `${s.on_time}–${s.off_time}`, vol, pre].filter(Boolean).join(' · ');
 
     const card = document.createElement('div');
@@ -936,6 +977,7 @@ function openForm(data = null) {
   validateForm();
   showView('form');
   if (window.wispPresets) window.wispPresets.loadSchedule(currentSpeaker, data ? data.favorite_id : null);
+  if (window.wispStations) window.wispStations.loadSchedule(data ? data.station_id : null);
 }
 
 function updateQuickChips(days) {
@@ -998,6 +1040,7 @@ document.querySelectorAll('.preset-pill').forEach(pill => {
   pill.addEventListener('click', () => {
     setSelectedPreset(pill.dataset.preset);
     if (window.wispPresets) window.wispPresets.clearScheduleChoice();
+    if (window.wispStations) window.wispStations.clearScheduleChoice();
   });
 });
 
@@ -1039,13 +1082,14 @@ document.getElementById('btn-save').addEventListener('click', async () => {
     name,
     previous_name: editingSchedule ? editingSchedule.name : null,
     speaker_id: window.wispPresets?.scheduleBinding()?.speaker_id || (editingSchedule ? editingSchedule.speaker_id : undefined),
-    favorite_id: window.wispPresets ? window.wispPresets.scheduleValue() : undefined,
+    favorite_id: window.wispPresets && !window.wispStations?.scheduleValue() ? window.wispPresets.scheduleValue() : null,
+    station_id: window.wispStations ? window.wispStations.scheduleValue() : undefined,
     days,
     on_time:          onTime,
     off_time:         offTime,
     volume,
-    preset:           selectedPreset === 'AUX' ? null : selectedPreset,
-    source:           selectedPreset === 'AUX' ? 'AUX' : null,
+    preset:           window.wispStations?.scheduleValue() || selectedPreset === 'AUX' ? null : selectedPreset,
+    source:           !window.wispStations?.scheduleValue() && selectedPreset === 'AUX' ? 'AUX' : null,
     fade_in_duration:  fadeIn  * 60,
     fade_out_duration: fadeOut * 60,
     paused: editingSchedule ? editingSchedule.paused : false,
@@ -1104,6 +1148,42 @@ if (window.WispPresetUI) {
     },
   });
 }
+
+if (window.WispStationUI) {
+  window.wispStations = window.WispStationUI.create({
+    document, fetch: (...args) => fetch(...args),
+    getSpeakers: () => discoveredSpeakers,
+    getSpeaker: () => currentSpeaker,
+    navigate: showView,
+    back: origin => { if (origin === 'speaker' && currentSpeaker) showView('speaker'); else loadHub(); },
+    assign: async (station, speaker) => {
+      openSpeaker(speaker);
+      const ready = await window.wispPresets.open(speaker);
+      if (!ready || activeView !== 'speaker' || currentSpeaker !== speaker) return;
+      window.wispPresets.choose({station_id: station.id, name: station.name, presetable: true});
+    },
+    schedule: (station, speaker) => {
+      openSpeaker(speaker);
+      openForm();
+      window.wispStations.loadSchedule(station.id);
+    },
+    onStationSelected: chosen => {
+      if (chosen) document.querySelectorAll('.preset-pill').forEach(pill => pill.classList.remove('active'));
+      else setSelectedPreset(selectedPreset);
+    },
+    clearFavorite: () => { if (window.wispPresets) window.wispPresets.clearScheduleChoice(); },
+    onPlay: (result, speaker) => {
+      openSpeaker(speaker);
+      latestOperation = result.operation || null;
+      renderOperation(latestOperation);
+      toast('Quiet playback requested; listen to confirm sound');
+    },
+  });
+}
+
+document.getElementById('f-favorite').addEventListener('change', () => {
+  if (document.getElementById('f-favorite').value && window.wispStations) window.wispStations.clearScheduleChoice();
+});
 
 /* ─── Boot ───────────────────────────────────────────────────────── */
 let bootStarted = false;

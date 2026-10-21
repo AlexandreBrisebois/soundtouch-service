@@ -103,3 +103,50 @@ plans, write-ahead persistence, ambiguity, collateral changes, schedule pins,
 quiet playback guards, safe metadata, URL restrictions and UI stale responses.
 These are contract tests, not evidence that a particular firmware will work.
 Keep issues #15 and #16 open until the qualification above is completed.
+
+## Stations: a library separate from six buttons
+
+The Stations page saves names and canonical direct-stream URLs without requiring
+an available speaker or consuming a physical button. Seven or more stations can
+be saved (a bounded 500 records, separate from favorite records). No personal
+station list is shipped or published. The storage remains local in favorites.json.
+
+Select a speaker and **Play quietly** to start that station at volume 5. The
+confirmation explains that current audio is replaced. Wisp verifies identity,
+source readiness and /select capability, confirms volume zero, sends a direct
+ContentItem selection, and only fades after fresh matching Playing. It never
+writes a preset to play a station. After acceptance, the app opens the selected
+speaker page for existing playback status and controls. Dedicated in-page
+Stations now-playing/volume/stop controls are not part of this draft. Cancellation/manual-takeover protections are
+the same as routine playback. Radio firmware/HTTPS/redirect support still needs
+real-device qualification; accepted requests and descriptor responses are not
+proof of sound. Wisp supplies the canonical URL unchanged; any stream redirects
+are followed by the speaker, not validated or fetched by Wisp.
+
+**Assign to preset** opens the existing explicit six-button preview/confirmation.
+Assignment creates an independent immutable favorite copy of the station URL.
+That favorite can be scheduled as before. The station library itself is not
+limited to six buttons; simultaneous physical assignments still are.
+
+**Remove** removes the station from the visible library only. It never clears a
+speaker button, rewrites schedules or stops audio. Its metadata remains privately
+archived because a currently playing speaker may refetch it. New Play/Assign
+requests for that removed ID are rejected. Existing physical favorite descriptors
+and schedules retain their own copy and continue unchanged. The confirmation
+explains this distinction. This is not a secure erase or automatic retention
+policy; archived records count toward the bounded storage limit. A hard purge
+would require a separate explicit decision after checking device references.
+
+**Schedule** selects a saved station directly in the existing routine editor.
+Choose the speaker, days, ON/OFF times, volume and fades. No physical button is
+required or consumed, even for the seventh station. The routine persists station
+and speaker IDs; scheduled ON uses the same direct selection but stays polite
+when the speaker is already active. OFF retains its existing stop-whatever-plays
+behavior. Existing preset, NAS-favorite and AUX routines remain unchanged.
+
+A routine may select either a saved station or a preset favorite, not both.
+Removing a station from the library keeps already configured routines working
+through the archived station record. Those routines can still be edited without
+losing the binding; archived stations cannot be attached to a new routine. A
+same-name replacement speaker cannot silently inherit a previously pinned
+routine. Existing runtime timezone/restart semantics remain those of #18.

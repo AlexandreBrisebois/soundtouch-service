@@ -52,3 +52,15 @@ def test_incomplete_occupied_preset_is_not_empty(monkeypatch):
     monkeypatch.setattr(library.status, '_get_xml', lambda *a: ET.fromstring('<presets><preset id="1"><ContentItem source="STORED_MUSIC"/></preset></presets>'))
     with pytest.raises(ValueError, match='incomplete'):
         library.read_presets('fake')
+
+
+def test_direct_select_uses_xml_and_never_store_preset(monkeypatch):
+    from app.core import control
+    calls = []
+    monkeypatch.setattr(control, '_post_command', lambda *args, **kwargs: calls.append((args, kwargs)) or True)
+    content = {'source': 'LOCAL_INTERNET_RADIO', 'type': 'stationurl', 'location': 'http://wisp/station', 'name': 'Jazz & calm', 'presetable': True}
+    assert control.select_content('fake', content, timeout=1.2)
+    args, kwargs = calls[0]
+    assert args[1] == 'select'
+    assert ET.fromstring(args[2]).findtext('itemName') == 'Jazz & calm'
+    assert kwargs['timeout'] == 1.2

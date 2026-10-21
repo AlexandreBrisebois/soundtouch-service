@@ -60,6 +60,8 @@ def _to_schedule(payload: Mapping[str, Any]) -> Schedule:
   }
   if payload.get("speaker_id"):
     schedule["speaker_id"] = str(payload["speaker_id"])
+  if payload.get("station_id"):
+    schedule["station_id"] = str(payload["station_id"])
   if payload.get("favorite_id"):
     schedule["favorite_id"] = str(payload["favorite_id"])
   return schedule
@@ -122,6 +124,12 @@ def _validate_schedule_payload(data: Any) -> tuple[SchedulePayload | None, dict[
       errors["speaker_id"] = "'speaker_id' must be a non-empty string when provided."
     else:
       normalized["speaker_id"] = speaker_id.strip()
+
+  if data.get("station_id"):
+    if not isinstance(data["station_id"], str) or not re.fullmatch(r"[0-9a-f]{32}", data["station_id"]):
+      errors["station_id"] = "Choose a valid saved station."
+    else:
+      normalized["station_id"] = data["station_id"]
 
   if data.get("favorite_id"):
     if not isinstance(data["favorite_id"], str) or not re.fullmatch(r"[0-9a-f]{32}", data["favorite_id"]):
@@ -303,6 +311,20 @@ def api_add_schedule(speaker_name: str) -> tuple[Any, int]:
     # Older clients omit favorite_id; do not silently remove protection on edit.
     if isinstance(data, dict) and "favorite_id" not in data and existing and existing.get("favorite_id"):
       normalized["favorite_id"] = existing["favorite_id"]
+    if isinstance(data, dict) and "station_id" not in data and existing and existing.get("station_id"):
+      normalized["station_id"] = existing["station_id"]
+    if normalized.get("station_id") and normalized.get("favorite_id"):
+      return jsonify({"errors": {"station_id": "Choose a station or a preset favorite, not both."}}), 400
+    if normalized.get("station_id"):
+      try:
+        favorites.station(normalized["station_id"], allow_removed=bool(existing and existing.get("station_id") == normalized["station_id"]))
+        pinned_id = existing.get("speaker_id") if existing else normalized.get("speaker_id")
+        found = favorites.device(speaker_name, pinned_id)
+      except ValueError as exc:
+        return jsonify({"errors": {"station_id": str(exc)}}), 400
+      normalized["speaker_id"] = found["device_id"]
+      normalized["preset"] = None
+      normalized["source"] = None
     if normalized.get("favorite_id"):
       try:
         binding = favorites.schedule_binding(normalized["favorite_id"], speaker_name)

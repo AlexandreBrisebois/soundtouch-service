@@ -1,0 +1,9 @@
+.stations-body { padding-bottom: 32px; }
+#stations-title { font-size: 22px; }
+#stations-message { font-size: 14px; line-height: 1.5; margin: 12px 0; overflow-wrap: anywhere; }
+.station-card { padding: 16px; margin-bottom: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow-wrap: anywhere; }
+.station-card h3 { font-size: 16px; }
+.station-add { margin: 24px 0; padding: 18px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.station-add h2 { font-size: 18px; margin-bottom: 16px; }
+.station-add label { margin-top: 12px; }
+.stations-body input:focus-visible, .stations-body select:focus-visible { outline: 3px solid var(--primary-dk); outline-offset: 2px; }

@@ -41,6 +41,8 @@ def _load() -> dict[str, Any]:
         value = json.loads(path().read_text())
         if value.get('version') != 1 or not isinstance(value.get('favorites'), dict):
             raise ValueError('Schema')
+        if not isinstance(value.get('stations', {}), dict):
+            raise ValueError('Station schema')
         return value
     except (OSError, ValueError, TypeError, AttributeError):
         raise FavoriteError('Favorites could not be read. Restore the file before making changes.') from None
@@ -203,9 +205,9 @@ def plan(speaker: str, data: dict[str, Any]) -> dict[str, Any]:
     name = _name(data.get('name'))
     kind = 'nas'
     radio_url = None
-    if data.get('radio_url') is not None:
+    if data.get('station_id') or data.get('radio_url') is not None:
         kind = 'radio'
-        radio_url = _safe_url(data['radio_url'])
+        radio_url = station(str(data['station_id']))['url'] if data.get('station_id') else _safe_url(data['radio_url'])
         base = radio_base()
         if not base or not any(s['source'] == 'LOCAL_INTERNET_RADIO' and s['ready'] for s in library.read_sources(found['ip'])):
             raise FavoriteError('Radio is not ready on this speaker. No preset was changed.')
@@ -322,5 +324,64 @@ def descriptor(favorite_id: str) -> dict[str, Any]:
     if value.get('kind') != 'radio':
         raise FavoriteError('Radio favorite not found.')
     stream = {'hasPlaylist': True, 'isRealtime': True, 'streamUrl': _safe_url(value['radio_url'])}
+    return {'artist': {}, 'audio': {**stream, 'streams': [stream]}, 'imageUrl': '',
+            'name': value['name'], 'streamType': 'liveRadio'}
+
+
+REMOVAL_NOTICE = 'Remove from the station library only. Existing speaker presets, schedules and current audio stay intact. Playback metadata is retained privately so those links keep working.'
+
+
+def stations() -> list[dict[str, Any]]:
+    with _lock:
+        return [copy.deepcopy(value) for value in _load().get('stations', {}).values() if not value.get('removed')]
+
+
+def add_station(name: Any, url: Any) -> dict[str, Any]:
+    value = {'id': uuid.uuid4().hex, 'name': _name(name), 'url': _safe_url(url)}
+    with _lock:
+        document = _load()
+        entries = document.setdefault('stations', {})
+        existing = next((item for item in entries.values() if not item.get('removed') and item['url'] == value['url']), None)
+        if existing:
+            raise FavoriteError('That stream is already in your station library.')
+        if len(entries) >= 500:
+            raise FavoriteError('Station storage is full. No station was added.')
+        entries[value['id']] = value
+        _save(document)
+    return copy.deepcopy(value)
+
+
+def station(station_id: str, *, allow_removed: bool = False) -> dict[str, Any]:
+    with _lock:
+        value = _load().get('stations', {}).get(station_id)
+        if not isinstance(value, dict) or (value.get('removed') and not allow_removed):
+            raise FavoriteError('Station not found in the library.')
+        return copy.deepcopy(value)
+
+
+def remove_station(station_id: str) -> None:
+    with _lock:
+        document = _load()
+        value = document.get('stations', {}).get(station_id)
+        if not isinstance(value, dict) or value.get('removed'):
+            raise FavoriteError('Station not found in the library.')
+        # Speakers may refetch descriptors after a library removal. Archive the
+        # record; never erase a live device reference or issue a device command.
+        value['removed'] = True
+        _save(document)
+
+
+def station_content(station_id: str, *, allow_removed: bool = False) -> dict[str, Any]:
+    value = station(station_id, allow_removed=allow_removed)
+    base = radio_base()
+    if not base:
+        raise FavoriteError('Configure a stable WISP_BASE_URL reachable by the speaker before playing radio.')
+    return {'source': 'LOCAL_INTERNET_RADIO', 'type': 'stationurl', 'presetable': True,
+            'name': value['name'], 'location': f'{base}/api/stations/{station_id}/stream'}
+
+
+def station_descriptor(station_id: str) -> dict[str, Any]:
+    value = station(station_id, allow_removed=True)
+    stream = {'hasPlaylist': True, 'isRealtime': True, 'streamUrl': _safe_url(value['url'])}
     return {'artist': {}, 'audio': {**stream, 'streams': [stream]}, 'imageUrl': '',
             'name': value['name'], 'streamType': 'liveRadio'}

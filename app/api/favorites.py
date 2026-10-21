@@ -71,3 +71,41 @@ def radio(favorite_id: str) -> Any:
     response = jsonify(favorites.descriptor(favorite_id))
     response.headers['Cache-Control'] = 'no-store'
     return response
+
+
+@favorites_bp.get('/api/stations')
+def list_stations() -> Any:
+    return jsonify(stations=favorites.stations(), removal_notice=favorites.REMOVAL_NOTICE)
+
+
+@favorites_bp.post('/api/stations')
+def add_station() -> Any:
+    data = body()
+    return jsonify(station=favorites.add_station(data.get('name'), data.get('url'))), 201
+
+
+@favorites_bp.delete('/api/stations/<station_id>')
+def remove_station(station_id: str) -> Any:
+    if body().get('confirmed') is not True:
+        raise favorites.FavoriteError(favorites.REMOVAL_NOTICE)
+    favorites.remove_station(station_id)
+    return jsonify(removed=True, message=favorites.REMOVAL_NOTICE)
+
+
+@favorites_bp.get('/api/stations/<station_id>/stream')
+def station_stream(station_id: str) -> Any:
+    response = jsonify(favorites.station_descriptor(station_id))
+    response.headers['Cache-Control'] = 'no-store'
+    return response
+
+
+@favorites_bp.post('/api/<speaker_name>/stations/<station_id>/play')
+def play_station(speaker_name: str, station_id: str) -> Any:
+    if body().get('confirmed') is not True:
+        raise favorites.FavoriteError('Confirm that station playback at volume 5 will replace current audio.')
+    favorites.station_content(station_id)
+    found = favorites.device(speaker_name)
+    operation = jobs.queue_station(speaker_name, found['device_id'], station_id)
+    if operation is None:
+        return jsonify(error='Playback worker unavailable. No station was started.'), 503
+    return jsonify(operation=operation, state='accepted', message='Station playback requested. No speaker button was changed.'), 202

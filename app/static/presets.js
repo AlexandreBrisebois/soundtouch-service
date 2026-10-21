@@ -138,6 +138,7 @@
           option.textContent = `Button ${slot}: ${preset && preset.name ? preset.name : 'Empty'}`; slots.append(option);
         }
         message('Choose a NAS folder or playlist. Existing buttons stay unchanged until you confirm.');
+        return true;
       } catch (error) { if (gate.current(ticket)) message(error.message); }
       finally { if (gate.current(ticket)) { busy(false); if (pendingWrites.has(name)) busy(true); } }
     }
@@ -183,7 +184,8 @@
       plan = null; el('preset-confirmation').hidden = true;
       try {
         const payload = {slot: Number(el('preset-slot').value), name: el('preset-name').value.trim()};
-        if (item.radio_url) payload.radio_url = item.radio_url;
+        if (item.station_id) payload.station_id = item.station_id;
+        else if (item.radio_url) payload.radio_url = item.radio_url;
         else payload.item_id = item.id;
         const result = await request(name, '/preset-plans', {...post(payload), signal: ticket.signal});
         if (!gate.current(ticket) || speaker !== name) return;

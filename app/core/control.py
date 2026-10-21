@@ -89,3 +89,9 @@ def play_preset(
     if isinstance(preset_num, bool) or not isinstance(preset_num, int) or not 1 <= preset_num <= 6:
         return False
     return send_key(ip, f"PRESET_{preset_num}", timeout=timeout)
+
+
+def select_content(ip: str, content: dict, *, timeout: float = HTTP_POST_TIMEOUT_SECONDS) -> bool:
+    """Select a server-resolved station identity, never write a physical preset."""
+    from app.core.library import content_xml
+    return _post_command(ip, 'select', ET.tostring(content_xml(content), encoding='unicode'), timeout=timeout)

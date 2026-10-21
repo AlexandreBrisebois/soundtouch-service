@@ -337,3 +337,18 @@ def test_next_run_has_offset_zone_and_skips_dst_gap(monkeypatch):
         else:
             os.environ['TZ'] = previous
         time.tzset()
+
+
+def test_station_queue_preserves_direct_binding_and_routine_parameters(monkeypatch):
+    from app.core import playback
+    playback.reset()
+    queued = []
+    monkeypatch.setattr(jobs, 'BACKGROUND_WORKER_POOL', object())
+    monkeypatch.setattr(jobs, 'submit_background_task', lambda *args: queued.append(args) or True)
+    schedule = jobs._normalize_schedule({'name': 'Radio', 'on_time': '07:00', 'off_time': '08:00', 'station_id': 'b' * 32, 'speaker_id': 'ABC', 'volume': 17, 'fade_in_duration': 20}, 'Room', 0)
+    assert schedule['preset'] is None and schedule['source'] is None
+    jobs.queue_on('Room', schedule)
+    args = queued[0]
+    assert args[1] is playback.run_on
+    assert args[3:] == (None, 17, None, 20, False, None, 'b' * 32, True)
+    assert args[2]['device_id'] == 'ABC'
