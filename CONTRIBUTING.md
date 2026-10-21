@@ -18,7 +18,7 @@ Thanks for taking the time to contribute.
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt ruff mypy pre-commit
+pip install -r requirements-dev.txt
 pre-commit install
 pre-commit run --all-files
 python -m app.main
