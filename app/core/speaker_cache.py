@@ -154,7 +154,7 @@ def _on_message(
                 if volume is not None:
                     _update_listener_cache(speaker_name, {"volume": volume}, stop_event, ws)
     except (ET.ParseError, ValueError) as exc:
-        logger.warning("WebSocket message processing failed for %s: %s", speaker_name, exc)
+        logger.warning("WebSocket message processing failed for %s: %s", speaker_name, type(exc).__name__)
 
 
 def _disconnect_listener(
@@ -176,7 +176,7 @@ def _on_error(
         # Callback errors do not always terminate run_forever themselves. Close
         # this connection so the loop can reconnect instead of ignoring it forever.
         _close_sockets([ws])
-    logger.warning("WebSocket error for %s: %s", speaker_name, error)
+    logger.warning("WebSocket error for %s: %s", speaker_name, type(error).__name__)
 
 
 def _on_close(
@@ -185,8 +185,8 @@ def _on_close(
 ) -> None:
     _disconnect_listener(speaker_name, stop_event, ws)
     logger.info(
-        "WebSocket closed for %s (code=%s, message=%s).",
-        speaker_name, close_status_code, close_msg,
+        "WebSocket closed for %s (code=%s).",
+        speaker_name, close_status_code,
     )
 
 
@@ -232,7 +232,7 @@ def _close_sockets(sockets: list[websocket.WebSocketApp]) -> None:
         try:
             ws.close()
         except Exception as exc:
-            logger.debug("Ignoring socket close error during shutdown: %s", exc)
+            logger.debug("Ignoring socket close error during shutdown: %s", type(exc).__name__)
 
 
 def start_ws_listeners(devices: list[dict[str, str]]) -> None:

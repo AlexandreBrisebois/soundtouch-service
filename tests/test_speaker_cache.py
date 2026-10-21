@@ -358,3 +358,11 @@ def test_duplicate_names_start_no_arbitrary_listener():
     speaker_cache.start_ws_listeners([{'name': 'Room', 'ip': 'one', 'device_id': 'A'},
                                       {'name': 'Room', 'ip': 'two', 'device_id': 'B'}])
     assert not speaker_cache._listener_threads
+
+
+def test_websocket_error_and_close_reason_are_redacted(caplog):
+    event, socket = register_listener()
+    secret = 'https://media.invalid/?token=private-source-token'
+    speaker_cache._on_error(socket, RuntimeError(secret), 'Office', event)
+    speaker_cache._on_close(socket, 1006, secret, 'Office', event)
+    assert 'private-source-token' not in caplog.text

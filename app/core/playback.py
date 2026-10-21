@@ -336,6 +336,15 @@ def run_on(op: Operation, preset: int | None, volume: int, source: str | None = 
         finish(op, 'unknown', 'preset_identity_unavailable')
         return
     op['expected'] = expected
+    # Preset/identity reads may have taken seconds. An automatic ON must remain
+    # polite if someone started audio while those reads were in flight.
+    if not force:
+        latest = _read(op)
+        if latest is None:
+            return
+        if latest.get('status', '').upper() != 'STANDBY':
+            finish(op, 'skipped', 'speaker_active', latest.get('observed_at'))
+            return
     # Quiet the existing source BEFORE anything that might start playback. Do not
     # restore volume on failure: that could blast the old or externally selected source.
     if not _volume(op, 0):

@@ -336,3 +336,14 @@ def test_unrecognized_transport_state_never_authorizes_write(device, state, mode
         playback.run_off(op, 0)
     assert not device[2]
     assert playback.last('Room')['state'] == 'unknown'
+
+
+def test_scheduled_on_stays_polite_if_manual_audio_starts_during_preset_read(device, monkeypatch):
+    def preset(ip, number, **kwargs):
+        device[0]['status'] = 'Playing'
+        return {'source': 'STORED_MUSIC', 'location': 'album/1'}
+    monkeypatch.setattr(playback.status, 'get_preset_identity', preset)
+    op = playback.begin('Room')
+    playback.run_on(op, 1, 10)
+    assert not device[2]
+    assert playback.last('Room')['state'] == 'skipped'
