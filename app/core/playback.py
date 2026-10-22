@@ -21,7 +21,7 @@ class Operation(TypedDict):
     canceled: threading.Event
     changed: threading.Event
     device_id: str | None
-    expected: dict[str, str] | None
+    expected: status.ContentIdentity | dict[str, str] | None
     expected_volume: int | None
     deadline: float
     mode: str
@@ -224,7 +224,7 @@ def manual(speaker: str, callback: Callable[[str], bool]) -> bool:
         return bool(callback(device['ip']))
 
 
-def _read(op: Operation) -> dict[str, Any] | None:
+def _read(op: Operation) -> status.PlaybackState | None:
     ip = _address(op, verify=False)
     if ip is None:
         return None
@@ -245,7 +245,7 @@ def _read(op: Operation) -> dict[str, Any] | None:
     return data
 
 
-def matches(expected: dict[str, str], data: dict[str, Any]) -> bool:
+def matches(expected: status.ContentIdentity | dict[str, str], data: status.PlaybackState) -> bool:
     if expected.get('source') == 'AUX':
         return data.get('source_type') == 'AUX'
     actual = data.get('content_identity') or {}
@@ -256,7 +256,7 @@ def matches(expected: dict[str, str], data: dict[str, Any]) -> bool:
     )
 
 
-def _same_session(op: Operation, data: dict[str, Any]) -> bool:
+def _same_session(op: Operation, data: status.PlaybackState) -> bool:
     expected = op['expected'] or {}
     if op['mode'] == 'off':
         actual = data.get('content_identity') or {'source': data.get('source_type', '')}
@@ -332,6 +332,7 @@ def run_on(op: Operation, preset: int | None, volume: int, source: str | None = 
     ip = _address(op)
     if ip is None:
         return
+    expected: status.ContentIdentity | dict[str, str] | None
     if station_id:
         from app.core import favorites, library
         try:
@@ -356,7 +357,7 @@ def run_on(op: Operation, preset: int | None, volume: int, source: str | None = 
             if (favorite.get('state') != 'readback_matched'
                     or favorite.get('speaker_id') != op['device_id']
                     or favorite.get('slot') != preset
-                    or not library.same_content(favorite['content'], expected)):
+                    or not library.same_content(favorite['content'], dict(expected))):
                 finish(op, 'unknown', 'favorite_preset_changed')
                 return
             sources = library.read_sources(ip)
