@@ -1,7 +1,7 @@
 """Explicit user-driven native preset management; never changes source registration."""
 from typing import Any
 from urllib.parse import urlsplit
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, Response, jsonify, request
 from app.core import favorites
 from app.scheduler import jobs
 
@@ -104,10 +104,73 @@ def station_stream(station_id: str) -> Any:
 @favorites_bp.post('/api/<speaker_name>/stations/<station_id>/play')
 def play_station(speaker_name: str, station_id: str) -> Any:
     if body().get('confirmed') is not True:
-        raise favorites.FavoriteError('Confirm that station playback at volume 5 will replace current audio.')
-    favorites.station_content(station_id)
+        raise favorites.FavoriteError('Confirm station playback at volume 5. For relay playback, stop current audio first.')
+    from app.core import radio_relay
+    item = favorites.station(station_id)
     found = favorites.device(speaker_name)
+    ready = radio_relay.readiness(item['url'], found['ip'])
+    if not ready['available']:
+        raise favorites.FavoriteError(ready['reason'])
     operation = jobs.queue_station(speaker_name, found['device_id'], station_id)
     if operation is None:
         return jsonify(error='Playback worker unavailable. No station was started.'), 503
     return jsonify(operation=operation, state='accepted', message='Station playback requested. No speaker button was changed.'), 202
+
+
+@favorites_bp.get('/api/<speaker_name>/stations/<station_id>/direct-test')
+def direct_test_info(speaker_name: str, station_id: str) -> Any:
+    from app.core import direct_radio, radio_stream
+    item = favorites.station(station_id)
+    favorites.device(speaker_name)
+    try:
+        radio_stream.candidate(item['url'])
+        supported = True
+    except radio_stream.StreamError:
+        supported = False
+    return jsonify(available=supported, experimental=True, warning=direct_radio.WARNING,
+                   duration_seconds=10, target_volume=5, quiet_start_guaranteed=False,
+                   physical_presets_supported=False, automatic_schedules_supported=False)
+
+
+@favorites_bp.post('/api/<speaker_name>/stations/<station_id>/direct-test')
+def direct_test(speaker_name: str, station_id: str) -> Any:
+    from app.core import direct_radio, radio_stream
+    data = body()
+    if data.get('confirmed') is not True or data.get('accept_startup_volume_risk') is not True:
+        raise favorites.FavoriteError(direct_radio.WARNING)
+    item = favorites.station(station_id)
+    radio_stream.candidate(item['url'])  # Validate before creating/canceling any operation.
+    found = favorites.device(speaker_name)
+    operation = jobs.queue_direct_radio_test(speaker_name, found['device_id'], station_id, item['url'])
+    if operation is None:
+        return jsonify(error='Playback worker unavailable. No test was started.'), 503
+    return jsonify(operation=operation, state='accepted', warning=direct_radio.WARNING), 202
+
+
+@favorites_bp.get('/api/radio-sessions/<token>/stream.mp3')
+def radio_session_stream(token: str) -> Any:
+    from app.core import radio_relay
+    if request.method != 'GET':
+        return jsonify(error='Only GET is supported.'), 405
+    # Current container uses Werkzeug's threaded server. Refuse servers where
+    # lifecycle cancellation cannot interrupt a blocked downstream socket.
+    try:
+        chunks, cleanup = radio_relay.consumer(token, request.remote_addr,
+                                               request.environ.get('werkzeug.socket'))
+    except radio_relay.RelayError:
+        return jsonify(error='Radio stream unavailable.'), 410
+    response = Response(chunks, content_type='audio/mpeg')
+    response.headers['Cache-Control'] = 'no-store'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.call_on_close(cleanup)
+    return response
+
+
+@favorites_bp.get('/api/<speaker_name>/stations/<station_id>/readiness')
+def station_readiness(speaker_name: str, station_id: str) -> Any:
+    from app.core import radio_relay
+    item = favorites.station(station_id)
+    found = favorites.device(speaker_name)
+    response = jsonify(radio_relay.readiness(item['url'], found['ip']))
+    response.headers['Cache-Control'] = 'no-store'
+    return response

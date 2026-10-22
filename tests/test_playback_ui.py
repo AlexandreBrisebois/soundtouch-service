@@ -198,3 +198,154 @@ def test_back_navigation_stops_playback_poll_and_discards_inflight_response():
       assert.equal(timers.size, 0);
       assert.equal(activeView, 'hub');
     """)
+
+
+def test_source_choice_shows_only_relevant_fields_and_preserves_drafts():
+    run_ui_checks(r"""
+      element('f-name').value = 'Morning';
+      element('f-station').value = 'radio-id';
+      element('f-favorite').value = 'favorite-id';
+      selectedPreset = 4;
+      setPlayKind('radio');
+      assert.equal(element('schedule-radio').hidden, false);
+      for (const kind of ['favorite', 'preset', 'aux']) assert.equal(element(`schedule-${kind}`).hidden, true);
+      assert.deepEqual(scheduleSource(), {station_id:'radio-id', favorite_id:null, preset:null, source:null});
+      setPlayKind('favorite');
+      assert.deepEqual(scheduleSource(), {station_id:null, favorite_id:'favorite-id', preset:null, source:null});
+      setPlayKind('preset');
+      assert.deepEqual(scheduleSource(), {station_id:null, favorite_id:null, preset:4, source:null});
+      setPlayKind('aux');
+      assert.deepEqual(scheduleSource(), {station_id:null, favorite_id:null, preset:null, source:'AUX'});
+      setPlayKind('radio');
+      assert.equal(scheduleSource().station_id, 'radio-id');
+      assert.equal(element('f-favorite').value, 'favorite-id');
+    """)
+
+
+def test_empty_source_does_not_fall_back_to_hidden_button_one():
+    run_ui_checks(r"""
+      element('f-name').value = 'Morning';
+      selectedPreset = 1;
+      element('f-station').value = '';
+      element('f-favorite').value = '';
+      for (const kind of ['', 'radio', 'favorite']) {
+        setPlayKind(kind);
+        assert.equal(hasScheduleSource(), false);
+        assert.equal(element('btn-save').disabled, true);
+        await element('btn-save').listeners.click(); // no fetch permitted by harness
+      }
+    """)
+
+
+def test_open_schedule_selects_legacy_source_and_new_draft_resets():
+    run_ui_checks(r"""
+      document.querySelector = () => element('quick');
+      window.wispPresets = {loadSchedule: (speaker, id) => {element('f-favorite').value=id || '';}, onViewChange:()=>{}};
+      window.wispStations = {loadSchedule: id => {element('f-station').value=id || '';}, onViewChange:()=>{}};
+      const existing={name:'Morning',on_time:'06:00',off_time:'07:00',days:[],volume:5,preset:3};
+      for (const [extra, kind] of [[{station_id:'s'},'radio'],[{favorite_id:'f'},'favorite'],[{source:'AUX'},'aux'],[{},'preset']]) {
+        openForm({...existing,...extra});
+        assert.equal(element('f-play-kind').value,kind);
+      }
+      currentSpeaker='Another speaker';
+      openForm();
+      assert.equal(element('f-play-kind').value,'');
+      assert.equal(element('f-favorite').value,'');
+      assert.equal(element('f-station').value,'');
+      assert.equal(hasScheduleSource(),false);
+    """)
+
+
+def test_nas_scope_and_source_controls_are_truthful():
+    text = TEMPLATE.read_text()
+    assert 'Music connected to this speaker' in text
+    assert 'not a scan of every NAS on your network' in text
+    assert 'for="f-play-kind">What to play' in text
+    for kind in ('radio', 'favorite', 'preset', 'aux'):
+        assert f'id="schedule-{kind}" hidden' in text
+    assert 'data-preset="AUX"' not in text
+
+
+def test_save_submits_only_the_selected_source_with_explicit_clear_fields():
+    run_ui_checks(r"""
+      element('f-name').value='Morning';
+      element('f-on').value='06:00'; element('f-off').value='07:00';
+      element('f-volume').value='5'; element('f-station').value='station-a';
+      element('f-favorite').value='favorite-a';
+      document.querySelectorAll=selector=>selector==='.day-chip.active' ? [{dataset:{day:'monday'}}] : [];
+      window.wispPresets={scheduleBinding:()=>({speaker_id:'favorite-speaker'}),onViewChange:()=>{}};
+      currentSpeaker='Kitchen'; selectedPreset=4;
+      const submitted=[];
+      fetch=async(url, options)=>{submitted.push({url, data:JSON.parse(options.body)});return {ok:true};};
+      for (const kind of ['radio','favorite','preset','aux']) {
+        setPlayKind(kind);
+        assert.equal(element('btn-save').disabled,false);
+        const source=scheduleSource();
+        await element('btn-save').listeners.click();
+        const saved=submitted.at(-1);
+        assert.equal(saved.url,'/api/Kitchen/schedules');
+        for (const key of ['station_id','favorite_id','preset','source']) assert.equal(saved.data[key],source[key]);
+        assert.equal(saved.data.speaker_id,kind==='favorite'?'favorite-speaker':undefined);
+      }
+      assert.equal(submitted.length,4);
+    """)
+
+
+def test_supporting_setup_is_collapsed_below_devices_and_schedules():
+    text = TEMPLATE.read_text()
+    assert '<details class="support-settings" id="hub-settings">' in text
+    assert '<details class="support-settings" id="speaker-settings">' in text
+    assert text.index('id="speaker-list"') < text.index('id="hub-settings"') < text.index('id="btn-hub-stations"')
+    assert text.index('id="schedule-list"') < text.index('id="btn-add-schedule"') < text.index('id="speaker-settings"') < text.index('id="btn-manage-presets"')
+    assert 'speaker-settings\').addEventListener' not in text
+    assert 'hub-settings\').addEventListener' not in text
+
+
+def test_speaker_button_selection_is_exposed_to_assistive_technology():
+    run_ui_checks(r"""
+      const buttons=[1,2,3].map(number=>({dataset:{preset:String(number)},classList:{toggle(){}},setAttribute(name,value){this[name]=value;}}));
+      document.querySelectorAll=()=>buttons;
+      setSelectedPreset(2);
+      assert.deepEqual(buttons.map(button=>button['aria-pressed']),['false','true','false']);
+    """)
+    assert 'id="f-favorite" aria-describedby="favorite-schedule-help"' in TEMPLATE.read_text()
+
+
+def test_direct_radio_stop_warning_survives_outcome_refresh_and_status_failure():
+    run_ui_checks(r"""
+      currentSpeaker='Living Room'; activeView='speaker';
+      for (const state of ['canceled','unknown','completed']) {
+        const outcome={state,terminal:true,reason:'different_reason',physical_stop_may_be_needed:true};
+        fetch=async url=>({ok:true,json:async()=>url.endsWith('/operations') ? {last_outcome:outcome} : {schedules:[]}});
+        await refreshPlayback('Living Room');
+        assert.equal(element('detail-physical-stop').hidden,false);
+        assert.match(element('detail-operation').textContent,/Physical Stop may be needed/);
+        assert.match(operationSummary(outcome),/closing Wisp does not stop/);
+      }
+      fetch=async()=>({ok:false}); await refreshPlayback('Living Room');
+      assert.equal(element('detail-physical-stop').hidden,false);
+      renderOperation(null); // new device starts without another device's stale warning
+      assert.equal(element('detail-physical-stop').hidden,true);
+      fetch=async url=>({ok:true,json:async()=>url.endsWith('/operations') ? {last_outcome:{state:'canceled',terminal:true,physical_stop_may_be_needed:true}} : {schedules:[]}});
+      await refreshPlayback('Living Room'); // reopening retrieves persistent server outcome
+      assert.equal(element('detail-physical-stop').hidden,false);
+      renderOperation({state:'completed',physical_stop_may_be_needed:false});
+      assert.equal(element('detail-physical-stop').hidden,true);
+    """)
+    text = TEMPLATE.read_text()
+    assert 'id="detail-physical-stop" role="alert" hidden' in text
+    assert 'Use the speaker’s physical Stop button and check its volume.' in text
+
+
+def test_schedule_save_surfaces_station_setup_error_without_losing_draft():
+    run_ui_checks(r"""
+      element('f-name').value='Morning'; element('f-on').value='06:00'; element('f-off').value='07:00';
+      element('f-volume').value='5'; element('f-station').value='ici';
+      document.querySelectorAll=selector=>selector==='.day-chip.active' ? [{dataset:{day:'monday'}}] : [];
+      setPlayKind('radio');
+      fetch=async()=>({ok:false,status:400,json:async()=>({errors:{station_id:'Enable the Linux HLS adapter in Settings.'}})});
+      await element('btn-save').listeners.click();
+      assert.equal(element('toast').textContent,'Enable the Linux HLS adapter in Settings.');
+      assert.equal(element('f-station').value,'ici');
+      assert.equal(element('schedule-preset').hidden,true);
+    """)

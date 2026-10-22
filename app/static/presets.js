@@ -117,6 +117,7 @@
     }
     async function open(name) {
       close(false); speaker = name; el('presets-panel').hidden = false;
+      el('speaker-settings').open = true;
       el('btn-manage-presets').setAttribute('aria-expanded', 'true');
       el('presets-title').textContent = `Presets · ${name}`;
       el('presets-title').focus();
@@ -237,7 +238,7 @@
     }
     async function loadSchedule(name, initialId) {
       scheduleSpeaker = name; const ticket = scheduleGate.next(); const select = el('f-favorite');
-      clear(select); select.append(Object.assign(doc.createElement('option'), {value: '', textContent: 'Use a numbered preset or AUX'}));
+      clear(select); select.append(Object.assign(doc.createElement('option'), {value: '', textContent: 'Choose a favorite…'}));
       if (initialId) select.append(Object.assign(doc.createElement('option'), {value: initialId, textContent: 'Saved favorite · checking assignment…'}));
       select.value = initialId || ''; select.disabled = true;
       try {
@@ -245,7 +246,7 @@
         if (!scheduleGate.current(ticket) || scheduleSpeaker !== name) return;
         const chosenId = select.value;
         favorites = result.favorites || [];
-        clear(select); select.append(Object.assign(doc.createElement('option'), {value: '', textContent: 'Use a numbered preset or AUX'}));
+        clear(select); select.append(Object.assign(doc.createElement('option'), {value: '', textContent: 'Choose a favorite…'}));
         favorites.filter(f => f.state === 'readback_matched').forEach(f => {
           select.append(Object.assign(doc.createElement('option'), {value: f.id, textContent: `${f.name} · button ${f.slot}`}));
         });

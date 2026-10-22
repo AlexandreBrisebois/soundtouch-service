@@ -50,7 +50,7 @@ def test_preset_markup_is_accessible_and_assets_are_linked():
     assert 'id="presets-title" tabindex="-1"' in text
     assert '/app-static/presets.js' in text
     assert '/app-static/presets.css' in text
-    assert 'favorite_id: window.wispPresets' in text
+    assert 'favorite_id: favorite || null' in text
     assert 'innerHTML' not in (ROOT / 'app/static/presets.js').read_text()
 
 
@@ -223,4 +223,14 @@ await ui.open('Living Room');
 getResponse=async()=>ok({items:[{id:'track',name:'Song',playable:true,presetable:true,is_dir:false}],total:1});
 el('preset-sources').children[0].listeners.click(); await flush();
 assert.equal(el('preset-items').children[0].children.filter(x=>x.textContent==='Choose').length,0);
+''')
+
+
+def test_explicit_preset_open_reveals_settings_before_confirmation():
+    checks('''
+el('speaker-settings').open=false;
+await ui.open('Living Room');
+assert.equal(el('speaker-settings').open,true);
+assert.equal(el('presets-panel').hidden,false);
+assert.equal(calls.length,1);
 ''')

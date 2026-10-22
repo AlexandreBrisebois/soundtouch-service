@@ -1,4 +1,7 @@
 """Unit tests must never contact speakers, discovery networks, or WebSockets."""
+import http.client
+import socket
+
 import pytest
 import requests
 
@@ -12,3 +15,6 @@ def no_live_network(monkeypatch):
     monkeypatch.setattr(requests.Session, 'request', denied)
     monkeypatch.setattr(discovery, 'Zeroconf', denied)
     monkeypatch.setattr(speaker_cache.websocket, 'WebSocketApp', denied)
+
+    monkeypatch.setattr(http.client.HTTPConnection, 'connect', denied)
+    monkeypatch.setattr(socket, 'getaddrinfo', denied)

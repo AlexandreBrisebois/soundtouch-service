@@ -324,9 +324,14 @@ def api_add_schedule(speaker_name: str) -> tuple[Any, int]:
       return jsonify({"errors": {"station_id": "Choose a station or a preset favorite, not both."}}), 400
     if normalized.get("station_id"):
       try:
-        favorites.station(normalized["station_id"], allow_removed=bool(existing and existing.get("station_id") == normalized["station_id"]))
+        station = favorites.station(normalized["station_id"], allow_removed=bool(existing and existing.get("station_id") == normalized["station_id"]))
         pinned_id = existing.get("speaker_id") if existing else normalized.get("speaker_id")
         found = favorites.device(speaker_name, pinned_id)
+        if not normalized.get("paused"):
+          from app.core import radio_relay
+          ready = radio_relay.readiness(station['url'], found['ip'])
+          if not ready['available']:
+            raise favorites.FavoriteError(ready['reason'])
       except ValueError as exc:
         return jsonify({"errors": {"station_id": str(exc)}}), 400
       normalized["speaker_id"] = found["device_id"]

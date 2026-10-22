@@ -391,6 +391,8 @@ def test_direct_station_quiets_then_selects_without_preset_write(device, monkeyp
     from app.core import favorites, library
     content = {'source': 'LOCAL_INTERNET_RADIO', 'type': 'stationurl', 'location': 'http://wisp/api/stations/id/stream', 'name': 'Radio', 'presetable': True}
     archive_access = []
+    monkeypatch.setenv('WISP_BASE_URL', 'http://wisp:9001')
+    monkeypatch.setattr(favorites, 'station', lambda *a, **kw: {'url': 'https://radio.example/live.mp3'})
     monkeypatch.setattr(favorites, 'station_content', lambda _, **kwargs: archive_access.append(kwargs['allow_removed']) or content)
     monkeypatch.setattr(favorites, 'capabilities', lambda _: {'/select'})
     monkeypatch.setattr(library, 'read_sources', lambda _: [{'source': 'LOCAL_INTERNET_RADIO', 'ready': True}])
@@ -440,6 +442,8 @@ def test_seventh_station_schedule_roundtrip_plays_without_any_preset(device, mon
     monkeypatch.setattr(jobs.config_queue, 'put', mutations.append)
     app = Flask(__name__)
     app.register_blueprint(api_bp)
+    monkeypatch.setattr(favorites, 'capabilities', lambda _: {'/select'})
+    monkeypatch.setattr(library, 'read_sources', lambda _: [{'source': 'LOCAL_INTERNET_RADIO', 'ready': True}])
     response = app.test_client().post('/api/Room/schedules', json={
         'name': 'Seventh radio', 'station_id': chosen['id'], 'preset': None, 'source': None,
         'days': ['monday'], 'on_time': '07:00', 'off_time': '08:00', 'volume': 9, 'fade_in_duration': 0})
@@ -543,3 +547,46 @@ def test_manual_idle_does_not_select_without_confirmed_zero_volume(device, monke
     playback.run_on(op, 1, 5, fade_in_duration=0, force=True)
     assert device[2] == [('volume', 0)]
     assert playback.last('Room')['reason'] == 'volume_not_confirmed'
+
+
+@pytest.mark.parametrize('change', ['source', 'volume'])
+def test_native_station_off_does_not_adopt_external_takeover(device, monkeypatch, change):
+    from app.core import favorites, library
+    monkeypatch.setenv('WISP_BASE_URL', 'http://wisp.local:9001')
+    monkeypatch.setattr(favorites, 'station', lambda *a, **k: {'url': 'https://radio.example/live.mp3'})
+    content = {'source': 'LOCAL_INTERNET_RADIO', 'type': 'stationurl', 'location': 'http://wisp/api/stations/id/stream'}
+    monkeypatch.setattr(favorites, 'station_content', lambda *a, **kw: content)
+    monkeypatch.setattr(favorites, 'capabilities', lambda _: {'/select'})
+    monkeypatch.setattr(library, 'read_sources', lambda _: [{'source': 'LOCAL_INTERNET_RADIO', 'ready': True}])
+    def select(ip, value, **kwargs):
+        device[0].update(status='Playing', source_type='LOCAL_INTERNET_RADIO', content_identity=dict(content))
+        return True
+    monkeypatch.setattr(playback.control, 'select_content', select)
+    op = playback.begin('Room', 'Morning', 'ABC')
+    playback.run_on(op, None, 5, fade_in_duration=0, station_id='id')
+    assert op['outcome']['state'] == 'playing'
+    before = list(device[2])
+    if change == 'source':
+        device[0].update(source_type='AUX', content_identity={'source': 'AUX'})
+    else:
+        device[1][0] = 8
+    off = playback.begin_radio_off('Room', 'Morning', 'ABC', 'id')
+    assert off is not None
+    playback.run_off(off, 0)
+    assert device[2] == before
+    assert off['outcome']['state'] == 'canceled'
+
+
+def test_older_nonradio_schedule_off_cannot_steal_native_radio_operation(device, monkeypatch):
+    from app.scheduler import jobs
+    op = playback.begin('Room', 'New radio', 'ABC')
+    playback._resolve(op)
+    op['outcome'].update(radio_mode='native', station_id='id', state='playing', terminal=True)
+    monkeypatch.setattr(jobs, 'BACKGROUND_WORKER_POOL', object())
+    result = jobs.queue_off('Room', {'name': 'Old NAS', 'speaker_id': 'ABC', 'fade_out_duration': 0})
+    assert result['state'] == 'skipped'
+    assert playback.current(op)
+    assert not device[2]
+    # A polite later automatic ON must not discard the original OFF ownership.
+    assert jobs.queue_on('Room', {'name': 'Later preset', 'speaker_id': 'ABC'})['operation_id'] == op['outcome']['operation_id']
+    assert playback.current(op)

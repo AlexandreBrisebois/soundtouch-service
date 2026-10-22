@@ -28,6 +28,7 @@ class Operation(TypedDict):
     initial_state: str
     verified: bool
     pending_volume: int | None
+    radio_idle: dict[str, Any] | None
 
 
 _lock = threading.RLock()
@@ -35,10 +36,13 @@ _operations: dict[str, Operation] = {}
 _write_locks: dict[str, threading.RLock] = {}
 _bindings: dict[str, str] = {}
 _device_owners: dict[str, Operation] = {}
+_radio_idle: dict[str, dict[str, Any]] = {}
 
 
 def reset() -> None:
     """Clear volatile state; no pending operation is resumed after restart."""
+    from app.core import radio_relay
+    radio_relay.reset()
     with _lock:
         for op in _operations.values():
             op['canceled'].set()
@@ -47,6 +51,7 @@ def reset() -> None:
         _write_locks.clear()
         _bindings.clear()
         _device_owners.clear()
+        _radio_idle.clear()
 
 
 def last(speaker: str) -> dict[str, Any] | None:
@@ -66,19 +71,35 @@ def finish(op: Operation, state: str, reason: str, observed_at: float | None = N
             return
         if op['outcome']['terminal']:
             return
+        if state == 'playing' and op['outcome'].get('radio_mode') == 'relay':
+            from app.core import radio_relay
+            session = radio_relay.for_device(op['device_id'])
+            live = session is not None and radio_relay.active(session, op['outcome']['operation_id'])
+            op['outcome']['relay_active'] = live
+            if not live:
+                state, reason = 'unknown', 'radio_session_ended'
         if state in TERMINAL:
             op['verified'] = False
+            if state != 'playing':
+                from app.core import radio_relay
+                radio_relay.cancel_owner(op['outcome']['operation_id'])
         op['outcome'].update(state=state, reason=reason, updated_at=time.time(),
                              observed_at=observed_at, terminal=state in TERMINAL)
 
 
-def cancel(speaker: str, reason: str = 'manual_override') -> None:
+def cancel(speaker: str, reason: str = 'manual_override', *, preserve_radio: bool = False) -> None:
     with _lock:
         op = _operations.get(speaker)
         # Also invalidate another name's operation on this already-bound device.
         owner = _device_owners.get(_bindings.get(speaker, ''))
+        for identity in (_bindings.get(speaker), op['device_id'] if op else None):
+            if identity:
+                _radio_idle.pop(identity, None)
         for target in (op, owner):
             if target is not None:
+                if not preserve_radio:
+                    from app.core import radio_relay
+                    radio_relay.cancel_owner(target['outcome']['operation_id'])
                 target['canceled'].set()
                 target['changed'].set()
                 target['verified'] = False
@@ -89,9 +110,14 @@ def cancel(speaker: str, reason: str = 'manual_override') -> None:
 
 
 def begin(speaker: str, schedule_name: str | None = None,
-          device_id: str | None = None) -> Operation:
+          device_id: str | None = None, *, preserve_radio: bool = False,
+          allow_radio_idle: bool = False) -> Operation:
     with _lock:
-        cancel(speaker, 'superseded')
+        from app.core import radio_relay
+        identity = device_id or _bindings.get(speaker)
+        idle = _radio_idle.pop(identity or '', None) if allow_radio_idle else None
+        previous_radio = radio_relay.for_device(device_id or _bindings.get(speaker)) if preserve_radio else None
+        cancel(speaker, 'superseded', preserve_radio=preserve_radio)
         now = time.time()
         op: Operation = {
             'speaker': speaker, 'canceled': threading.Event(), 'changed': threading.Event(),
@@ -99,13 +125,77 @@ def begin(speaker: str, schedule_name: str | None = None,
             'expected': None, 'expected_volume': None,
             'deadline': time.monotonic() + START_DEADLINE_SECONDS,
             'mode': 'on', 'initial_state': '', 'verified': False, 'pending_volume': None,
+            'radio_idle': idle,
             'outcome': {'operation_id': uuid.uuid4().hex, 'schedule_name': schedule_name,
                         'state': 'accepted', 'reason': 'queued', 'accepted_at': now,
                         'updated_at': now, 'observed_at': None, 'terminal': False,
                         'audible_confirmed': False, 'in_flight': False},
         }
         _operations[speaker] = op
+        if previous_radio is not None:
+            radio_relay.transfer(previous_radio, op['outcome']['operation_id'])
         return op
+
+
+def begin_radio_off(speaker: str, schedule_name: str | None, device_id: str | None,
+                    station_id: str) -> Operation | None:
+    """Never let a stale routine's OFF stop a later routine or manual session."""
+    from app.core import radio_relay
+    with _lock:
+        session = radio_relay.for_device(device_id or _bindings.get(speaker))
+        if session is not None:
+            if session['station_id'] != station_id or session['schedule_name'] != schedule_name:
+                return None
+            return begin(speaker, schedule_name, device_id, preserve_radio=True)
+        previous = _operations.get(speaker)
+        if (previous is not None and current(previous)
+                and previous['outcome'].get('radio_mode') == 'native'
+                and previous['outcome'].get('station_id') == station_id
+                and previous['outcome'].get('schedule_name') == schedule_name
+                and (previous['outcome']['state'] == 'playing' or previous['verified'])):
+            expected, volume = previous['expected'], previous['expected_volume']
+            op = begin(speaker, schedule_name, device_id)
+            op['mode'] = 'native_station_off'
+            op['expected'], op['expected_volume'] = expected, volume
+            return op
+        return None
+
+
+def begin_nonradio_schedule_off(speaker: str, schedule_name: str, device_id: str | None) -> Operation | None:
+    with _lock:
+        if has_radio(speaker, device_id):
+            return None
+        return begin(speaker, schedule_name, device_id)
+
+
+def has_radio(speaker: str, device_id: str | None = None) -> bool:
+    from app.core import radio_relay
+    with _lock:
+        identity = device_id or _bindings.get(speaker)
+        owner = _device_owners.get(identity or '') or _operations.get(speaker)
+        native = (owner is not None and current(owner)
+                  and owner['outcome'].get('radio_mode') == 'native'
+                  and (owner['outcome']['state'] == 'playing' or owner['verified']))
+        return radio_relay.for_device(identity) is not None or native
+
+
+def relay_ended(owner: str, reason: str) -> None:
+    """A live audio feed ending invalidates a previous terminal Playing outcome."""
+    with _lock:
+        for op in _operations.values():
+            if op['outcome']['operation_id'] == owner and current(op):
+                op['outcome'].update(state='unknown', reason=reason, terminal=True,
+                                     updated_at=time.time(), relay_active=False)
+                op['changed'].set()
+                return
+
+
+def record_radio_idle(op: Operation, observed: dict[str, Any]) -> None:
+    with _lock:
+        if (current(op) and op['device_id'] and op['outcome']['state'] == 'completed'
+                and observed['source'] == 'INVALID_SOURCE' and observed['bose_state'] == ''
+                and observed['state'] == 'PAUSED_PLAYBACK' and observed['transport_status'] == 'OK'):
+            _radio_idle[op['device_id']] = {'volume': observed['volume']}
 
 
 def wait(op: Operation, delay: float) -> bool:
@@ -239,8 +329,8 @@ def _read(op: Operation, *, allow_unselected: bool = False) -> status.PlaybackSt
         finish(op, 'unknown', 'playback_observation_unavailable')
         return None
     # Some speakers report this exact state when on without selected content.
-    # Only an explicit start may accept it, before selection, using this fresh read.
-    # It must never establish playback or authorize a later fade/automatic start.
+    # Explicit starts or a provenance-checked radio cycle may request this read.
+    # It never establishes playback or by itself authorizes any fade/selection.
     observed_at = data['observed_at']
     if (allow_unselected and data.get('source_type') == 'INVALID_SOURCE'
             and data.get('status') == 'Unknown' and data.get('raw_state') == 'UNKNOWN'
@@ -275,6 +365,13 @@ def _same_session(op: Operation, data: status.PlaybackState) -> bool:
     return matches(expected, data) and data.get('status', '').upper() == 'PLAYING'
 
 
+def _radio_idle_event_conflicts(evidence: dict[str, Any], data: dict[str, Any]) -> bool:
+    return (('status' in data and not (data.get('source_type') == 'INVALID_SOURCE'
+                                     and data.get('status') == 'Unknown'
+                                     and data.get('raw_state') == 'UNKNOWN'))
+            or ('volume' in data and data['volume'] != evidence['volume']))
+
+
 def observe_external(speaker: str, data: dict[str, Any]) -> None:
     """Wake the owner to reconcile fresh reads, never trust delayed event echoes.
 
@@ -283,7 +380,15 @@ def observe_external(speaker: str, data: dict[str, Any]) -> None:
     than themselves establishing either success or a manual override.
     """
     with _lock:
+        identity = _bindings.get(speaker)
+        evidence = _radio_idle.get(identity or '')
+        if evidence is not None and _radio_idle_event_conflicts(evidence, data):
+            _radio_idle.pop(identity or '', None)
         op = _operations.get(speaker)
+        for candidate in (op, _device_owners.get(identity or '')):
+            if (candidate is not None and current(candidate) and candidate['radio_idle'] is not None
+                    and _radio_idle_event_conflicts(candidate['radio_idle'], data)):
+                candidate['radio_idle'] = None
         if op and current(op) and op['verified']:
             op['changed'].set()
 
@@ -333,10 +438,12 @@ def run_on(op: Operation, preset: int | None, volume: int, source: str | None = 
     finish(op, 'starting', 'checking_speaker')
     if _resolve(op) is None:
         return
-    data = _read(op, allow_unselected=force)
+    owned_idle = bool(station_id and op['radio_idle'] is not None)
+    data = _read(op, allow_unselected=force or owned_idle)
     if data is None:
         return
-    if data.get('status', '').upper() != 'STANDBY' and not force:
+    if data.get('status', '').upper() != 'STANDBY' and not force and not (
+            owned_idle and data.get('source_type') == 'INVALID_SOURCE'):
         finish(op, 'skipped', 'speaker_active', data.get('observed_at'))
         return
     ip = _address(op)
@@ -344,12 +451,25 @@ def run_on(op: Operation, preset: int | None, volume: int, source: str | None = 
         return
     expected: status.ContentIdentity | dict[str, str] | None
     if station_id:
-        from app.core import favorites, library
+        from app.core import favorites, library, radio_relay, relay_playback
         try:
+            saved = favorites.station(station_id, allow_removed=allow_archived_station)
+            op['outcome']['station_id'] = station_id
+            ready = radio_relay.readiness(saved['url'], ip)
+            if not ready['available']:
+                finish(op, 'failed', ready['reason'])
+                return
+            op['outcome']['radio_mode'] = ready['mode']
+            if ready['mode'] == 'relay':
+                relay_playback.run_on(op, station_id, saved['url'], volume, fade_in_duration, force)
+                return
+            if not force and data.get('status', '').upper() != 'STANDBY':
+                finish(op, 'skipped', 'native_station_requires_standby')
+                return
             station_content = favorites.station_content(station_id, allow_removed=allow_archived_station)
             expected = {key: station_content[key] for key in ('source', 'sourceAccount', 'location', 'type') if station_content.get(key)}
-            ready = any(item['source'] == 'LOCAL_INTERNET_RADIO' and item['ready'] for item in library.read_sources(ip))
-            if not ready or '/select' not in favorites.capabilities(ip):
+            source_ready = any(item['source'] == 'LOCAL_INTERNET_RADIO' and item['ready'] for item in library.read_sources(ip))
+            if not source_ready or '/select' not in favorites.capabilities(ip):
                 finish(op, 'unknown', 'station_source_unavailable')
                 return
         except (ValueError, KeyError, TypeError):
@@ -432,9 +552,15 @@ def run_off(op: Operation, fade_out_duration: float = 60) -> None:
     """Preserve existing OFF semantics, but never act after detected takeover."""
     if not current(op):
         return
+    protected_station = op['mode'] == 'native_station_off'
     op['mode'] = 'off'
     finish(op, 'starting', 'checking_speaker')
     if _resolve(op) is None:
+        return
+    from app.core import radio_relay, relay_playback
+    session = radio_relay.for_device(op['device_id'])
+    if session is not None and session['owner'] == op['outcome']['operation_id']:
+        relay_playback.run_off(op, session, fade_out_duration)
         return
     data = _read(op)
     if data is None:
@@ -442,6 +568,10 @@ def run_off(op: Operation, fade_out_duration: float = 60) -> None:
     if data.get('status', '').upper() == 'STANDBY':
         finish(op, 'skipped', 'already_standby', data.get('observed_at'))
         return
+    if protected_station and not matches(op['expected'] or {}, data):
+        finish(op, 'canceled', 'radio_station_changed')
+        return
+    previous_volume = op['expected_volume']
     op['initial_state'] = data.get('status', '').upper()
     op['expected'] = data.get('content_identity') or {'source': data.get('source_type', '')}
     ip = _address(op)
@@ -450,6 +580,9 @@ def run_off(op: Operation, fade_out_duration: float = 60) -> None:
     volume = status.get_volume(ip, timeout=_budget(op))
     if volume is None:
         finish(op, 'unknown', 'volume_observation_unavailable')
+        return
+    if protected_station and volume != previous_volume:
+        finish(op, 'canceled', 'volume_changed')
         return
     op['expected_volume'] = volume
     op['verified'] = True
