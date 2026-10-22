@@ -213,3 +213,9 @@ manual priority, optional stable speaker IDs, failure behavior and remaining har
 Keep an independent Stations library with Add and a visible Schedule action. Each station’s ⋯ menu contains Test playback, Assign to speaker button and Remove; playback and removal still require confirmation. Browse a NAS library already registered on a speaker, review a physical-button assignment, and bind a routine to that favorite. Compatible radio sources can use a Wisp-hosted metadata descriptor. Hardware qualification is still required; readiness and readback do not prove audible playback. See [setup, safety and qualification](docs/native-presets.md) before changing an existing button.
 
 The bundled `app/data/stations.seed.json` adds CHOM, Énergie Montréal, CBC Radio One Montréal, The Buzz, ICI Première Montréal and Star 92.9 to the library once, including on upgrade. Existing entries and deletions are preserved; playback, presets and schedules do not change. These streams still need testing on your speakers. See [seed behavior](docs/native-presets.md#starter-stations).
+
+### Local container testing
+
+Use `task container:up SPEAKER_IPS=YOUR_SPEAKER_LAN_IP` to build this checkout with
+its bundled radio converter. See [the short container-testing guide](docs/container-testing.md)
+for the base URL, separate test data, and Docker Desktop networking checks.

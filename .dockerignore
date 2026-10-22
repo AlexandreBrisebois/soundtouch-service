@@ -1,0 +1,6 @@
+# Only application build inputs enter the Docker build context.
+**
+!Dockerfile
+!requirements.txt
+!app/
+!app/**

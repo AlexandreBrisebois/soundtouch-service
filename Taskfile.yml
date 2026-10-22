@@ -83,6 +83,26 @@ tasks:
         echo "Wisp stopped."
         BASH
 
+  container:up:
+    desc: Build and start Wisp's Linux test container (separate paused-first-run state)
+    dir: '{{.ROOT_DIR}}'
+    env:
+      WISP_SPEAKER_IPS: '{{.SPEAKER_IPS | default .WISP_SPEAKER_IPS | default ""}}'
+    cmds:
+      - .venv/bin/python scripts/container_dev.py up
+
+  container:down:
+    desc: Stop this checkout's test container (keep its data)
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - .venv/bin/python scripts/container_dev.py down
+
+  container:logs:
+    desc: Follow this checkout's test container logs
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - .venv/bin/python scripts/container_dev.py logs
+
   tag:
     desc: Create and push a release tag
     dir: '{{.ROOT_DIR}}'

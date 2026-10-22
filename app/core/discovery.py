@@ -1,4 +1,6 @@
 import logging
+import os
+import ipaddress
 import time
 import socket
 import threading
@@ -105,12 +107,60 @@ def _with_device_ids(devices: list[dict[str, str]]) -> list[dict[str, str]]:
     ]
 
 
+
+def configured_speaker_ips(value: str) -> list[str]:
+    """Only explicit RFC1918 IPv4 endpoints, never names, URLs or public hosts."""
+    if not value.strip():
+        return []
+    parts = value.split(",")
+    if len(parts) > 8 or len(value) > 256:
+        raise ValueError("WISP_SPEAKER_IPS accepts at most eight private IPv4 addresses")
+    networks = tuple(ipaddress.ip_network(net) for net in
+                     ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
+    result = []
+    for part in parts:
+        address = ipaddress.IPv4Address(part.strip())
+        if not any(address in network for network in networks):
+            raise ValueError("WISP_SPEAKER_IPS requires private LAN IPv4 addresses")
+        if str(address) not in result:
+            result.append(str(address))
+    return result
+
+
+def _read_configured_device(ip: str) -> dict[str, str] | None:
+    if not _identity_slots.acquire(blocking=False):
+        return None
+    try:
+        return status.get_device_info(ip)
+    except Exception:
+        logger.warning("Configured speaker identity read failed")
+        return None
+    finally:
+        _identity_slots.release()
+
+
+def _configured_devices(ips: list[str]) -> list[dict[str, str]]:
+    if not ips:
+        return []
+    executor = ThreadPoolExecutor(max_workers=len(ips))
+    futures = [executor.submit(_read_configured_device, ip) for ip in ips]
+    try:
+        completed, _pending = wait(futures, timeout=_IDENTITY_LOOKUP_BUDGET_SECONDS)
+        return [device for future in completed if (device := future.result()) is not None]
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
 def discover_systems(timeout: float = DISCOVERY_SCAN_TIMEOUT_SECONDS) -> list[dict[str, str]]:
     """Scan mDNS, then enrich names/IPs with bounded read-only /info identities.
 
     An empty device_id means identity could not be verified, not a new identity.
     Duplicate names remain visible so callers can request an explicit device ID.
     """
+    ips = configured_speaker_ips(os.getenv("WISP_SPEAKER_IPS", ""))
+    # Explicit addresses avoid Desktop's multicast boundary. Every refresh still
+    # reads /info and runs through the same ambiguity/identity registry below.
+    if ips:
+        return _configured_devices(ips)
     zeroconf = Zeroconf()
     listener = SoundTouchListener()
     try:
