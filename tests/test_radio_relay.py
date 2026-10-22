@@ -342,7 +342,7 @@ def test_schedule_readiness_preserves_native_but_explains_relay_prerequisites(de
 
 def test_exact_ici_adapter_uses_same_volume_gate_and_reports_disabled(device, radio, monkeypatch):
     from app.core import radio_hls
-    monkeypatch.setattr(radio_hls, 'available', lambda: False)
+    monkeypatch.setenv('WISP_ENABLE_HLS_RADIO', '0')
     readiness = relay.readiness(radio_hls.SAVED_URL, 'A')
     assert not readiness['available'] and 'WISP_ENABLE_HLS_RADIO' in readiness['reason']
     monkeypatch.setattr(radio_hls, 'available', lambda: True)
@@ -488,3 +488,22 @@ def test_inflight_idle_permission_revoked_by_changed_event_even_if_source_return
         assert device[1] == before
     else:
         assert result['outcome']['state'] == 'playing'
+
+
+@pytest.mark.parametrize(('platform', 'executable', 'message'), [
+    ('linux', '/usr/bin/ffmpeg', None),
+    ('darwin', '/usr/bin/ffmpeg', 'Linux container'),
+    ('linux', None, 'requires FFmpeg'),
+])
+def test_ici_readiness_without_activation_flag(device, radio, monkeypatch, platform, executable, message):
+    from app.core import radio_hls
+    monkeypatch.delenv('WISP_ENABLE_HLS_RADIO', raising=False)
+    monkeypatch.setattr(radio_hls.sys, 'platform', platform)
+    monkeypatch.setattr(radio_hls.shutil, 'which', lambda _: executable)
+    readiness = relay.readiness(radio_hls.SAVED_URL, 'A')
+    if message is None:
+        assert readiness['available'] and readiness['mode'] == 'relay'
+        assert readiness['hardware_verified'] is False
+    else:
+        assert not readiness['available'] and message in readiness['reason']
+        assert 'WISP_ENABLE_HLS_RADIO=1' not in readiness['reason']

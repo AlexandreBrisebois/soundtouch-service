@@ -1,8 +1,11 @@
-# ICI Première: opt-in container relay
+# ICI Première: automatic container relay
 
 This adapter supports only the existing Montréal ICI Première seed URL:
 `https://rcavliveaudio.akamaized.net/hls/live/2006635/P-2QMTL0_MTL/master.m3u8`.
-It is disabled unless `WISP_ENABLE_HLS_RADIO=1`; it also requires Linux and FFmpeg.
+It is available automatically when Linux and FFmpeg are present, as in the Wisp
+container image. No activation flag is needed. Administrators can explicitly disable
+it with `WISP_ENABLE_HLS_RADIO=0`; remove that override to restore the default.
+Missing Linux/FFmpeg support produces an explanation instead of attempting playback.
 The scheduler's speaker-reachable HTTP `WISP_BASE_URL` and volume/ownership gate
 remain required. It does not register Bose sources or write physical presets.
 
@@ -38,5 +41,7 @@ Verification: bounded live playlist/single-segment inspection and local AAC-to-M
 conversion succeeded. Automated tests use synthetic audio only, including concurrent
 isolated sessions and cancellation. This is not a claim of sustained playback,
 Docker image build, target-container performance, or physical-speaker acceptance.
-Keep opt-in disabled until the built image and a brief supervised speaker test pass.
+Before relying on unattended ICI schedules, verify playback with a brief supervised
+speaker test and check target-container performance. Automatic availability is not
+a claim that speaker playback has been verified.
 CHOM and Énergie provider access failures are not resolved by this adapter.

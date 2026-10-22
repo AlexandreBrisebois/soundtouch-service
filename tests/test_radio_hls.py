@@ -52,7 +52,7 @@ def test_duplicate_and_truncated_playlist():
 
 
 def test_disabled_and_wrong_station(monkeypatch):
-    monkeypatch.delenv('WISP_ENABLE_HLS_RADIO', raising=False)
+    monkeypatch.setenv('WISP_ENABLE_HLS_RADIO', '0')
     assert not hls.supports_exact_url(hls.SAVED_URL)
     with pytest.raises(UpstreamError):
         hls.open_ici_stream(hls.SAVED_URL)
@@ -389,3 +389,34 @@ def test_pre_stream_failure_reaps_and_releases(monkeypatch, failure):
         hls.open_ici_stream(hls.SAVED_URL)
     assert process.killed and process.waited and process.stdin.closed and process.stdout.closed
     assert slots.acquire(blocking=False)
+
+
+@pytest.mark.parametrize('flag', [None, '1'])
+def test_ici_available_automatically_with_requirements(monkeypatch, flag):
+    if flag is None:
+        monkeypatch.delenv('WISP_ENABLE_HLS_RADIO', raising=False)
+    else:
+        monkeypatch.setenv('WISP_ENABLE_HLS_RADIO', flag)
+    monkeypatch.setattr(hls.sys, 'platform', 'linux')
+    monkeypatch.setattr(hls.shutil, 'which', lambda _: '/usr/bin/ffmpeg')
+    assert hls.available()
+    assert hls.supports_exact_url(hls.SAVED_URL)
+    assert hls.unavailable_reason() is None
+
+
+@pytest.mark.parametrize(('platform', 'executable', 'flag', 'reason'), [
+    ('darwin', '/usr/bin/ffmpeg', None, 'Linux container'),
+    ('linux', None, None, 'requires FFmpeg'),
+    ('linux', '/usr/bin/ffmpeg', '0', 'disabled by WISP_ENABLE_HLS_RADIO=0'),
+])
+def test_ici_missing_requirements_explain_remedy(monkeypatch, platform, executable, flag, reason):
+    monkeypatch.delenv('WISP_ENABLE_HLS_RADIO', raising=False)
+    if flag is not None:
+        monkeypatch.setenv('WISP_ENABLE_HLS_RADIO', flag)
+    monkeypatch.setattr(hls.sys, 'platform', platform)
+    monkeypatch.setattr(hls.shutil, 'which', lambda _: executable)
+    assert not hls.available()
+    assert not hls.supports_exact_url(hls.SAVED_URL)
+    assert reason in hls.unavailable_reason()
+    with pytest.raises(UpstreamError, match='converter unavailable'):
+        hls.open_ici_stream(hls.SAVED_URL)
