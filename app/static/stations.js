@@ -34,6 +34,7 @@
     function clearConfirmation() { confirmation = null; el('stations-confirmation').hidden = true; }
     function setBusy() {
       el('stations-add').disabled = writing;
+      el('stations-starter').disabled = writing;
       el('stations-refresh').disabled = writing;
       el('stations-speaker').disabled = writing;
       el('stations-confirm').disabled = writing;
@@ -123,6 +124,26 @@
       }
       else if (active) message('The earlier save finished. Refresh to check your station library.');
     }
+    async function addStarters() {
+      if (writing || !active) return;
+      const ticket = ++generation;
+      if (controller) controller.abort();
+      clearConfirmation(); writing = true; setBusy(); message('Saving starter stations…');
+      let result;
+      try {
+        // Library-only write; never abort or retry automatically after navigation.
+        result = await request('/api/stations/starter', post({}));
+      } catch (error) {
+        if (active && ticket === generation) message(`${error.message} Refresh the library before retrying; starter stations may have been saved.`);
+        return;
+      } finally {
+        writing = false; setBusy();
+        if (active && ticket !== generation) message('The earlier save finished. Refresh to check your station library before retrying.');
+      }
+      if (active && ticket === generation) {
+        if (await refresh()) message(`${result.added} starter station${result.added === 1 ? '' : 's'} added; ${result.skipped} already present. No playback, presets or schedules were changed. Speaker playback still needs testing.`);
+      }
+    }
     async function confirm() {
       if (!confirmation || writing || !active) return;
       const chosen = confirmation; clearConfirmation();
@@ -179,6 +200,7 @@
     el('btn-speaker-stations').addEventListener('click', () => open('speaker'));
     el('btn-stations-back').addEventListener('click', () => { close(); deps.back(origin); });
     el('stations-refresh').addEventListener('click', refresh);
+    el('stations-starter').addEventListener('click', addStarters);
     el('stations-speaker').addEventListener('change', () => { clearConfirmation(); render(); });
     el('stations-add-form').addEventListener('submit', add);
     el('stations-confirm').addEventListener('click', confirm);
@@ -187,7 +209,7 @@
       if (el('f-station').value) deps.clearFavorite();
       if (deps.onStationSelected) deps.onStationSelected(!!el('f-station').value);
     });
-    return {open, close, refresh, add, confirm, loadSchedule,
+    return {open, close, refresh, add, addStarters, confirm, loadSchedule,
       scheduleValue() { return el('f-station').value || null; },
       clearScheduleChoice() { el('f-station').value = ''; if (deps.onStationSelected) deps.onStationSelected(false); },
       onViewChange(view) {

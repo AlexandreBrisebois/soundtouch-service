@@ -150,3 +150,30 @@ through the archived station record. Those routines can still be edited without
 losing the binding; archived stations cannot be attached to a new routine. A
 same-name replacement speaker cannot silently inherit a previously pinned
 routine. Existing runtime timezone/restart semantics remain those of #18.
+
+
+### Starter stations
+
+**Stations → Add starter stations** (`POST /api/stations/starter` with a JSON
+object) adds six public stream suggestions: CHOM 97.7, Énergie Montréal 94.3,
+CBC **Radio One** Montréal (not CBC Music), The Buzz 99.9, ICI Première Montréal
+95.1 and Star 92.9. No speaker selection or `WISP_BASE_URL` is needed to save them.
+Playback still requires the normal radio setup and an explicit listening test.
+
+The import is deliberately optional rather than a startup seed: an empty library
+and a user's deletions are valid choices. Opening Stations or restarting Wisp
+never restores deleted stations. Clicking the action again can add removed
+suggestions back as new records; archived playback links remain unchanged.
+Repeated requests skip visible entries with the same exact URL or a matching
+trimmed, case-insensitive name, retaining their names, URLs and IDs. Custom
+entries, favorites and schedules are untouched. A custom URL under a starter's
+name takes precedence. The whole batch is saved atomically; a storage error adds
+none. The UI blocks repeat clicks while saving and never retries writes itself.
+
+The bundled URLs are starting points, not hardware-qualified sources. AAC/MP3,
+HTTPS redirects and CBC/ICI HLS playlists may not work on every SoundTouch
+firmware. A successful HTTP response is not proof of speaker compatibility or
+sound, and adding these entries does not mark them ready. Wisp does not fetch the
+streams during import. Playback, button assignment and scheduling remain separate,
+explicit actions. Broadcasters may change their URLs; manually add a replacement
+when needed rather than silently rewriting a user's saved source.

@@ -336,3 +336,82 @@ def test_station_direct_play_pins_device_without_preset_mutation(rig, monkeypatc
     assert client.post(endpoint, json={'confirmed': True}).status_code == 202
     assert calls == [('Bedroom', 'ABC', item['id'])]
     assert not rig[1]
+
+
+def test_starters_are_explicit_idempotent_and_library_only(rig, monkeypatch):
+    def forbidden(*args, **kwargs):
+        pytest.fail('Starter import must not access speakers or start playback')
+    monkeypatch.setattr(favorites.discovery, 'resolve_device', forbidden)
+    monkeypatch.setattr(library, 'read_presets', forbidden)
+    monkeypatch.setattr(library, 'store_preset', forbidden)
+    monkeypatch.setattr(playback, 'manual', forbidden)
+    assert favorites.stations() == []
+    assert not favorites.path().exists()
+    assert favorites.add_starter_stations() == {'added': 6, 'skipped': 0}
+    saved = favorites.path().read_bytes()
+    assert favorites.add_starter_stations() == {'added': 0, 'skipped': 6}
+    assert favorites.path().read_bytes() == saved
+    assert len(favorites.stations()) == 6
+    assert all('ready' not in item for item in favorites.stations())
+    assert not rig[1]
+
+
+def test_starters_preserve_custom_names_urls_favorites_and_removed_links(rig):
+    name, url = favorites.STARTER_STATIONS[0]
+    renamed = favorites.add_station('My radio', url)
+    custom = favorites.add_station('  ' + favorites.STARTER_STATIONS[1][0].upper() + '  ', 'https://radio.example/custom')
+    other = favorites.add_station('Custom', 'https://radio.example/other')
+    document = favorites._load()
+    document['favorites']['existing'] = {'name': 'Keep unchanged'}
+    favorites._save(document)
+    assert favorites.add_starter_stations() == {'added': 4, 'skipped': 2}
+    for item in (renamed, custom, other):
+        assert favorites.station(item['id']) == item
+    assert favorites._load()['favorites'] == document['favorites']
+    favorites.remove_station(renamed['id'])
+    assert len(favorites.stations()) == 6  # Reads never restore removed starters.
+    assert favorites.add_starter_stations() == {'added': 1, 'skipped': 5}
+    assert favorites.station(renamed['id'], allow_removed=True) == {**renamed, 'removed': True}
+    assert any(item['name'] == name and item['id'] != renamed['id'] for item in favorites.stations())
+
+
+def test_concurrent_starter_imports_do_not_duplicate(rig):
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(lambda _: favorites.add_starter_stations(), range(4)))
+    assert sum(result['added'] for result in results) == 6
+    assert len(favorites.stations()) == 6
+
+
+def test_starters_capacity_and_failed_write_are_atomic(rig, monkeypatch):
+    document = {'version': 1, 'favorites': {}, 'stations': {
+        str(i): {'id': str(i), 'name': str(i), 'url': f'https://radio.example/{i}'}
+        for i in range(495)}}
+    favorites._save(document)
+    before = favorites.path().read_bytes()
+    with pytest.raises(ValueError, match='storage is full'):
+        favorites.add_starter_stations()
+    assert favorites.path().read_bytes() == before
+    document['stations'] = {}
+    favorites._save(document)
+    before = favorites.path().read_bytes()
+    def fail(*args):
+        raise OSError('disk full')
+    monkeypatch.setattr(favorites.os, 'replace', fail)
+    with pytest.raises(ValueError, match='could not be saved'):
+        favorites.add_starter_stations()
+    assert favorites.path().read_bytes() == before
+
+
+def test_starter_api_requires_json_same_origin_and_no_get_mutation(rig):
+    app = Flask(__name__)
+    app.register_blueprint(favorites_bp)
+    client = app.test_client()
+    endpoint = '/api/stations/starter'
+    assert client.get(endpoint).status_code == 405
+    assert client.post(endpoint).status_code == 400
+    assert client.post(endpoint, json={}, headers={'Origin': 'https://elsewhere.example'}).status_code == 400
+    assert client.post(endpoint, json={}, headers={'Sec-Fetch-Site': 'cross-site'}).status_code == 400
+    assert not favorites.path().exists()
+    assert client.post(endpoint, json={}).json == {'added': 6, 'skipped': 0}
+    assert client.post(endpoint, json={}).json == {'added': 0, 'skipped': 6}

@@ -351,6 +351,39 @@ def add_station(name: Any, url: Any) -> dict[str, Any]:
     return copy.deepcopy(value)
 
 
+# Public starting points, not firmware-qualified playback sources. Never seeded
+# on startup: deletion must remain a user choice until another explicit import.
+STARTER_STATIONS = (
+    ('CHOM 97.7', 'https://playerservices.streamtheworld.com/api/livestream-redirect/CHOMFMAAC.aac'),
+    ('Énergie Montréal 94.3', 'https://playerservices.streamtheworld.com/api/livestream-redirect/CKMFFMAAC.aac'),
+    ('CBC Radio One Montréal', 'https://cbcradiolive.akamaized.net/hls/live/2041030/ES_R1EMT/master.m3u8'),
+    ('The Buzz 99.9', 'https://playerservices.streamtheworld.com/api/livestream-redirect/WBTZFM.mp3'),
+    ('ICI Première Montréal 95.1', 'https://rcavliveaudio.akamaized.net/hls/live/2006635/P-2QMTL0_MTL/master.m3u8'),
+    ('Star 92.9', 'https://live.amperwave.net/direct/vox-wezffmmp3-imc'),
+)
+
+
+def add_starter_stations() -> dict[str, int]:
+    """Atomically add missing suggestions without overwriting library choices."""
+    with _lock:
+        document = _load()
+        entries = document.setdefault('stations', {})
+        active = [item for item in entries.values() if not item.get('removed')]
+        urls = {item['url'] for item in active}
+        names = {item['name'].strip().casefold() for item in active}
+        additions = []
+        for name, url in STARTER_STATIONS:
+            if url in urls or name.casefold() in names:
+                continue
+            additions.append({'id': uuid.uuid4().hex, 'name': _name(name), 'url': _safe_url(url)})
+        if len(entries) + len(additions) > 500:
+            raise FavoriteError('Station storage is full. No starter stations were added.')
+        if additions:
+            entries.update({item['id']: item for item in additions})
+            _save(document)
+        return {'added': len(additions), 'skipped': len(STARTER_STATIONS) - len(additions)}
+
+
 def station(station_id: str, *, allow_removed: bool = False) -> dict[str, Any]:
     with _lock:
         value = _load().get('stations', {}).get(station_id)

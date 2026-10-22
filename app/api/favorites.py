@@ -84,6 +84,12 @@ def add_station() -> Any:
     return jsonify(station=favorites.add_station(data.get('name'), data.get('url'))), 201
 
 
+@favorites_bp.post('/api/stations/starter')
+def add_starter_stations() -> Any:
+    body()  # Same JSON and same-origin guard as other library writes.
+    return jsonify(favorites.add_starter_stations())
+
+
 @favorites_bp.delete('/api/stations/<station_id>')
 def remove_station(station_id: str) -> Any:
     if body().get('confirmed') is not True:

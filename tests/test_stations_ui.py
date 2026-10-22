@@ -201,3 +201,55 @@ def test_template_serializes_station_binding_without_preset_requirement():
     assert 'window.wispStations.loadSchedule(data ? data.station_id : null)' in html
     assert "favorite_id: window.wispPresets && !window.wispStations?.scheduleValue()" in html
     assert "preset:           window.wispStations?.scheduleValue() ||" in html
+
+
+def test_starter_button_is_explicit_library_only_action_without_speaker():
+    html = (ROOT / 'app/templates/index.html').read_text()
+    assert 'id="stations-starter" type="button"' in html
+    assert 'CBC Radio One Montreal' in html
+    assert 'These streams still need testing on your speakers.' in html
+    checks('''
+current=null;await ui.open();
+assert.equal(calls.length,1);assert.equal(el('stations-starter').disabled,false);
+response=async(url,opts)=>opts.method==='POST'?ok({added:6,skipped:0}):ok({stations:[station]});
+await el('stations-starter').listeners.click();
+const writes=calls.filter(call=>call.opts.method==='POST');
+assert.equal(writes.length,1);assert.equal(writes[0].url,'/api/stations/starter');
+assert.deepEqual(JSON.parse(writes[0].opts.body),{});
+assert.equal(assignments.length,0);assert.equal(plays.length,0);assert.equal(schedules.length,0);
+assert.match(el('stations-message').textContent,/6 starter stations added; 0 already present/);
+assert.match(el('stations-message').textContent,/No playback, presets or schedules were changed/);
+assert.match(el('stations-message').textContent,/still needs testing/);
+assert.equal(el('stations-list').children[0].children[0].textContent,station.name);
+''')
+
+
+def test_starter_duplicate_clicks_and_other_writes_are_suppressed():
+    checks('''
+await ui.open();let finish;
+response=()=>new Promise(resolve=>finish=resolve);
+const pending=ui.addStarters();await ui.addStarters();await ui.add();await ui.refresh();
+assert.equal(calls.length,2);assert.equal(el('stations-starter').disabled,true);
+assert.equal(el('stations-add').disabled,true);assert.equal(el('stations-refresh').disabled,true);
+assert.equal(calls[1].opts.signal,undefined);
+response=async()=>ok({stations:[]});finish(ok({added:0,skipped:6}));await pending;
+assert.equal(el('stations-starter').disabled,false);
+assert.match(el('stations-message').textContent,/0 starter stations added; 6 already present/);
+''')
+
+
+def test_starter_pending_navigation_and_failure_do_not_retry_or_overwrite_new_view():
+    checks('''
+await ui.open();let finish;
+response=()=>new Promise(resolve=>finish=resolve);
+const pending=ui.addStarters();ui.close();await ui.open();
+assert.equal(calls.length,2);assert.equal(el('stations-starter').disabled,true);
+finish(ok({added:6,skipped:0}));await pending;
+assert.equal(calls.length,2);assert.equal(el('stations-starter').disabled,false);
+assert.match(el('stations-message').textContent,/earlier save finished/);
+response=async()=>{throw new Error('Disconnected');};await ui.addStarters();
+assert.equal(calls.length,3);
+assert.match(el('stations-message').textContent,/Refresh the library before retrying/);
+assert.match(el('stations-message').textContent,/may have been saved/);
+ui.close();await ui.addStarters();assert.equal(calls.length,3);
+''')
