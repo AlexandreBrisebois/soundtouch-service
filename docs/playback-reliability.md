@@ -34,6 +34,9 @@ station or automatic replay is added. Raw ContentItem locations/accounts stay in
 1. Resolve and verify stable speaker identity; read fresh playback state. Automatic ON
    skips existing activity. Explicit Run Now can replace audio, even for a paused schedule.
    Unknown/unreachable state never authorizes a POWER toggle.
+   Manual starts also accept a fresh, identity-matched `INVALID_SOURCE` / `Unknown`
+   / `UNKNOWN` observation when the speaker is on without selected content. This
+   exception applies only before selection, never to automatic starts or fade guards.
 2. Read the existing preset's ContentItem (`/presets`, read only), or identify AUX.
    A preset needs source and opaque location; compare other returned identity fields too.
 3. Set/read back volume zero **before** source selection. Stop on unconfirmed writes.

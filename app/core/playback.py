@@ -224,10 +224,11 @@ def manual(speaker: str, callback: Callable[[str], bool]) -> bool:
         return bool(callback(device['ip']))
 
 
-def _read(op: Operation) -> status.PlaybackState | None:
+def _read(op: Operation, *, allow_unselected: bool = False) -> status.PlaybackState | None:
     ip = _address(op, verify=False)
     if ip is None:
         return None
+    read_started = time.time()
     data = status.get_now_playing(ip, timeout=_budget(op))
     if not current(op):
         return None
@@ -237,6 +238,15 @@ def _read(op: Operation) -> status.PlaybackState | None:
     if not isinstance(data.get('observed_at'), (int, float)):
         finish(op, 'unknown', 'playback_observation_unavailable')
         return None
+    # Some speakers report this exact state when on without selected content.
+    # Only an explicit start may accept it, before selection, using this fresh read.
+    # It must never establish playback or authorize a later fade/automatic start.
+    observed_at = data['observed_at']
+    if (allow_unselected and data.get('source_type') == 'INVALID_SOURCE'
+            and data.get('status') == 'Unknown' and data.get('raw_state') == 'UNKNOWN'
+            and not isinstance(observed_at, bool)
+            and read_started <= observed_at <= time.time()):
+        return data
     if (data.get('status', '').upper() not in
             {'STANDBY', 'PLAYING', 'PAUSED', 'BUFFERING', 'STOPPED'}
             or data.get('source_type') in {None, '', 'UNKNOWN'}):
@@ -323,7 +333,7 @@ def run_on(op: Operation, preset: int | None, volume: int, source: str | None = 
     finish(op, 'starting', 'checking_speaker')
     if _resolve(op) is None:
         return
-    data = _read(op)
+    data = _read(op, allow_unselected=force)
     if data is None:
         return
     if data.get('status', '').upper() != 'STANDBY' and not force:

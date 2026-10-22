@@ -465,3 +465,81 @@ def test_seventh_station_schedule_roundtrip_plays_without_any_preset(device, mon
     assert device[2][-1] == ('volume', 9)
     assert ('select', f"http://wisp.local:9001/api/stations/{chosen['id']}/stream") in device[2]
     assert not any(call[0] == 'preset' for call in device[2])
+
+
+def unselected(device):
+    device[0].update(status='Unknown', source_type='INVALID_SOURCE', raw_state='UNKNOWN')
+
+
+def test_manual_start_from_unselected_idle_is_quiet_and_verified(device):
+    unselected(device)
+    op = playback.begin('Room', 'Test favorite')
+    playback.run_on(op, 1, 5, fade_in_duration=0, force=True)
+    assert device[2] == [('volume', 0), ('preset', 1), ('volume', 5)]
+    assert playback.last('Room')['state'] == 'playing'
+
+
+def test_automatic_start_from_unselected_idle_still_refuses(device):
+    unselected(device)
+    op = playback.begin('Room', 'Morning')
+    playback.run_on(op, 1, 5, fade_in_duration=0)
+    assert device[2] == []
+    assert playback.last('Room')['reason'] == 'playback_observation_unavailable'
+
+
+@pytest.mark.parametrize('field,value', [
+    ('source_type', 'UNKNOWN'), ('source_type', 'STORED_MUSIC'),
+    ('status', 'OFFLINE'), ('raw_state', 'PLAY_STATE'), ('raw_state', None),
+    ('device_id', None), ('device_id', 'OTHER'),
+])
+def test_manual_idle_exception_requires_exact_state_and_identity(device, field, value):
+    unselected(device)
+    device[0][field] = value
+    op = playback.begin('Room', 'Test favorite')
+    playback.run_on(op, 1, 5, fade_in_duration=0, force=True)
+    assert device[2] == []
+    assert playback.last('Room')['state'] == 'unknown'
+
+
+@pytest.mark.parametrize('observed_at', [None, 'now', True, 0, float('nan'), float('inf')])
+def test_manual_idle_exception_requires_fresh_observation(device, monkeypatch, observed_at):
+    unselected(device)
+    monkeypatch.setattr(playback.status, 'get_now_playing',
+                        lambda *_, **kw: dict(device[0], observed_at=observed_at))
+    op = playback.begin('Room', 'Test favorite')
+    playback.run_on(op, 1, 5, fade_in_duration=0, force=True)
+    assert device[2] == []
+    assert playback.last('Room')['reason'] == 'playback_observation_unavailable'
+
+
+def test_unselected_after_preset_never_fades_up(device, monkeypatch):
+    unselected(device)
+    def select(*_, **kw):
+        device[2].append(('preset', 1))
+        return True
+    monkeypatch.setattr(playback.control, 'play_preset', select)
+    op = playback.begin('Room', 'Test favorite')
+    playback.run_on(op, 1, 5, fade_in_duration=0, force=True)
+    assert device[2] == [('volume', 0), ('preset', 1)]
+    assert playback.last('Room')['reason'] == 'playback_observation_unavailable'
+
+
+def test_unselected_during_manual_fade_never_increases_volume(device, monkeypatch):
+    unselected(device)
+    def wait(op, delay):
+        unselected(device)
+        return playback.current(op)
+    monkeypatch.setattr(playback, 'wait', wait)
+    op = playback.begin('Room', 'Test favorite')
+    playback.run_on(op, 1, 5, fade_in_duration=5, force=True)
+    assert device[2] == [('volume', 0), ('preset', 1)]
+    assert playback.last('Room')['reason'] == 'playback_observation_unavailable'
+
+
+def test_manual_idle_does_not_select_without_confirmed_zero_volume(device, monkeypatch):
+    unselected(device)
+    monkeypatch.setattr(playback.status, 'get_volume', lambda *_, **kw: None)
+    op = playback.begin('Room', 'Test favorite')
+    playback.run_on(op, 1, 5, fade_in_duration=0, force=True)
+    assert device[2] == [('volume', 0)]
+    assert playback.last('Room')['reason'] == 'volume_not_confirmed'
