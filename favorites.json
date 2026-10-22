@@ -1,0 +1,37 @@
+{
+    "favorites": {},
+    "station_seed_version": 1,
+    "stations": {
+        "1a726ac57cb843f1833bd5d82800e565": {
+            "id": "1a726ac57cb843f1833bd5d82800e565",
+            "name": "CBC Radio One Montréal",
+            "url": "https://cbcradiolive.akamaized.net/hls/live/2041030/ES_R1EMT/master.m3u8"
+        },
+        "1babf347d0664c07ab0d7435f6875d84": {
+            "id": "1babf347d0664c07ab0d7435f6875d84",
+            "name": "Énergie Montréal 94.3",
+            "url": "https://playerservices.streamtheworld.com/api/livestream-redirect/CKMFFMAAC.aac"
+        },
+        "1d6df1e237634ed2be3da52dfda40a6e": {
+            "id": "1d6df1e237634ed2be3da52dfda40a6e",
+            "name": "CHOM 97.7",
+            "url": "https://playerservices.streamtheworld.com/api/livestream-redirect/CHOMFMAAC.aac"
+        },
+        "5ea9efb6d85d4a458ed536e4e3d7e603": {
+            "id": "5ea9efb6d85d4a458ed536e4e3d7e603",
+            "name": "The Buzz 99.9",
+            "url": "https://playerservices.streamtheworld.com/api/livestream-redirect/WBTZFM.mp3"
+        },
+        "676863e04b8944fcbe0e5dc45704a05e": {
+            "id": "676863e04b8944fcbe0e5dc45704a05e",
+            "name": "Star 92.9",
+            "url": "https://live.amperwave.net/direct/vox-wezffmmp3-imc"
+        },
+        "d464f0a0b88c40d389f6df69fa20105a": {
+            "id": "d464f0a0b88c40d389f6df69fa20105a",
+            "name": "ICI Première Montréal 95.1",
+            "url": "https://rcavliveaudio.akamaized.net/hls/live/2006635/P-2QMTL0_MTL/master.m3u8"
+        }
+    },
+    "version": 1
+}
