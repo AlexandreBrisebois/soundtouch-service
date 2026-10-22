@@ -222,3 +222,5 @@ favorites.json
 
 # Local Wisp backups
 /.wisp-backups/
+.wisp-run/identity
+.wisp-run/pid
