@@ -535,3 +535,54 @@ def test_new_station_schedule_needs_no_preset_and_rejects_dual_binding(monkeypat
     assert queued[0]['data']['preset'] is None
     payload['favorite_id'] = 'a' * 32
     assert create_test_app().test_client().post('/api/Room/schedules', json=payload).status_code == 400
+
+
+@pytest.mark.parametrize('value', [0, '0'])
+def test_schedule_validation_preserves_zero_volume_and_fades(value):
+    from app.api.routes import _validate_schedule_payload
+
+    normalized, errors = _validate_schedule_payload({
+        'name': 'Quiet', 'days': ['monday'], 'on_time': '07:00', 'off_time': '08:00',
+        'volume': value, 'fade_in_duration': value, 'fade_out_duration': value,
+    })
+
+    assert errors is None
+    assert normalized is not None
+    assert normalized['volume'] == 0
+    assert normalized['fade_in_duration'] == 0
+    assert normalized['fade_out_duration'] == 0
+
+
+@pytest.mark.parametrize('fades', [{}, {'fade_in_duration': None, 'fade_out_duration': None}])
+def test_schedule_validation_preserves_numeric_defaults(fades):
+    from app.api.routes import _validate_schedule_payload
+    from app.core.constants import (
+        DEFAULT_FADE_IN_DURATION_SECONDS, DEFAULT_FADE_OUT_DURATION_SECONDS, DEFAULT_VOLUME,
+    )
+
+    normalized, errors = _validate_schedule_payload({
+        'name': 'Default', 'days': ['monday'], 'on_time': '07:00', 'off_time': '08:00',
+        **fades,
+    })
+
+    assert errors is None
+    assert normalized is not None
+    assert normalized['volume'] == DEFAULT_VOLUME
+    assert normalized['fade_in_duration'] == DEFAULT_FADE_IN_DURATION_SECONDS
+    assert normalized['fade_out_duration'] == DEFAULT_FADE_OUT_DURATION_SECONDS
+
+
+def test_schedule_validation_accumulates_all_numeric_errors(monkeypatch):
+    queued = []
+    monkeypatch.setattr('app.api.routes.jobs.config_queue.put', queued.append)
+
+    response = create_test_app().test_client().post('/api/Room/schedules', json={
+        'name': 'Invalid', 'days': ['monday'], 'on_time': '07:00', 'off_time': '08:00',
+        'volume': None, 'fade_in_duration': -1, 'fade_out_duration': 'invalid', 'paused': 'yes',
+    })
+
+    assert response.status_code == 400
+    assert set(response.get_json()['errors']) == {
+        'volume', 'fade_in_duration', 'fade_out_duration', 'paused',
+    }
+    assert not queued

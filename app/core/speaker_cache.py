@@ -93,7 +93,7 @@ def _is_current_listener(
 
 
 def _update_listener_cache(
-    name: str, data: dict[str, Any], stop_event: threading.Event, ws: websocket.WebSocketApp
+    name: str, data: status.PlaybackState | dict[str, Any], stop_event: threading.Event, ws: websocket.WebSocketApp
 ) -> None:
     # Keep ownership checking and publication atomic against replacement/shutdown.
     with _listener_lock:
@@ -103,10 +103,10 @@ def _update_listener_cache(
         if expected_id and 'status' in data and data.get('device_id') != expected_id:
             invalidate_cache(name)
             return
-        update_cache(name, data)
+        update_cache(name, dict(data))
     # Avoid coupling cache locks to the operation registry/write lock.
     from app.core import playback
-    playback.observe_external(name, data)
+    playback.observe_external(name, dict(data))
 
 
 def _on_open(

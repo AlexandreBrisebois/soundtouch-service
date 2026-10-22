@@ -196,13 +196,20 @@ def _validate_schedule_payload(data: Any) -> tuple[SchedulePayload | None, dict[
   normalized["source"] = source
   normalized["preset"] = None if source is not None else preset
 
-  normalized["volume"] = _coerce_int(data.get("volume", DEFAULT_VOLUME), "volume", errors, minimum=0, maximum=100)
-  normalized["fade_in_duration"] = _coerce_non_negative_number(
+  volume = _coerce_int(data.get("volume", DEFAULT_VOLUME), "volume", errors, minimum=0, maximum=100)
+  if volume is not None:
+    normalized["volume"] = volume
+  fade_in_duration = _coerce_non_negative_number(
     data.get("fade_in_duration", DEFAULT_FADE_IN_DURATION_SECONDS), "fade_in_duration", errors, DEFAULT_FADE_IN_DURATION_SECONDS
   )
-  normalized["fade_out_duration"] = _coerce_non_negative_number(
+  if fade_in_duration is not None:
+    normalized["fade_in_duration"] = fade_in_duration
+  fade_out_duration = _coerce_non_negative_number(
     data.get("fade_out_duration", DEFAULT_FADE_OUT_DURATION_SECONDS), "fade_out_duration", errors, DEFAULT_FADE_OUT_DURATION_SECONDS
   )
+
+  if fade_out_duration is not None:
+    normalized["fade_out_duration"] = fade_out_duration
 
   paused = data.get("paused", False)
   if not isinstance(paused, bool):
