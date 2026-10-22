@@ -1,4 +1,4 @@
-"""Opt-in ICI packed-AAC adapter; no general HLS or FFmpeg network access."""
+"""Capability-gated ICI packed-AAC adapter; no general HLS or FFmpeg network access."""
 import http.client
 import os
 import re
@@ -25,9 +25,18 @@ _SLOTS = threading.BoundedSemaphore(2)
 _SEGMENT = re.compile(r'adaptive_128/[A-Za-z0-9_-]+/[0-9]+/media_ao_[0-9]+\.aac\Z')
 
 
+def unavailable_reason() -> str | None:
+    if os.environ.get('WISP_ENABLE_HLS_RADIO') == '0':
+        return 'ICI conversion is disabled by WISP_ENABLE_HLS_RADIO=0. Remove that override to use it.'
+    if sys.platform != 'linux':
+        return 'ICI conversion requires the Linux container for its resource limits. Run Wisp in its container.'
+    if shutil.which('ffmpeg') is None:
+        return 'ICI conversion requires FFmpeg. Use the current Wisp container image, which includes it.'
+    return None
+
+
 def available() -> bool:
-    return (os.environ.get('WISP_ENABLE_HLS_RADIO') == '1'
-            and sys.platform == 'linux' and shutil.which('ffmpeg') is not None)
+    return unavailable_reason() is None
 
 
 def validate_url(url: str) -> None:
@@ -350,7 +359,7 @@ def open_ici_stream(saved_url: str) -> ICIStream:
     if saved_url != SAVED_URL:
         raise UpstreamError('hls_station_unsupported')
     if not available():
-        raise UpstreamError('hls_not_enabled_or_ffmpeg_missing')
+        raise UpstreamError('hls_converter_unavailable')
     if not _SLOTS.acquire(blocking=False):
         raise UpstreamError('hls_capacity_exhausted')
     fetcher = Fetcher()

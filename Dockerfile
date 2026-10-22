@@ -1,6 +1,6 @@
 FROM python:3.15.0-alpine3.24
 
-# ICI packed-AAC HLS adapter (runtime opt-in, no FFmpeg network input).
+# ICI packed-AAC HLS adapter (automatically available, no FFmpeg network input).
 RUN apk add --no-cache ffmpeg=8.1.2-r0
 
 # Set the working directory

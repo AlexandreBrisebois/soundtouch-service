@@ -14,8 +14,10 @@ services:
       # API Port configuration
       - PORT=9001
       - FAVORITES_FILE=/workspace/state/favorites.json
-      # Optional radio metadata origin, stable and reachable by speakers:
+      # Radio relay/metadata origin, stable and reachable by speakers:
       # - WISP_BASE_URL=http://wisp.lan:9001
+      # ICI conversion is automatic in this Linux/FFmpeg image; no activation flag.
+      # Optional administrative disable: WISP_ENABLE_HLS_RADIO=0
 
       # VERY IMPORTANT: Set your exact time zone so the Python scheduler 
       # triggers your config.json "HH:MM" at the correct local time instead of UTC.

@@ -39,7 +39,7 @@ def stream_url(saved_url: str) -> str:
     # The suffix is eligibility only: transport must validate actual MPEG frames.
     if saved_url == radio_hls.SAVED_URL:
         if not radio_hls.available():
-            raise RelayError('ICI relay requires the Linux container, FFmpeg, and WISP_ENABLE_HLS_RADIO=1. It is not hardware verified.')
+            raise RelayError(radio_hls.unavailable_reason() or 'ICI converter support is unavailable.')
         return saved_url
     try:
         return radio_stream.candidate(saved_url)
@@ -58,7 +58,7 @@ def stream_url(saved_url: str) -> str:
                 if not address.is_global or address.is_multicast:
                     raise RelayError('MP3 relay requires a public station URL.')
             return saved_url
-        raise RelayError('This station needs a supported MP3 stream or the optional ICI adapter; other HLS/AAC streams are not supported.') from None
+        raise RelayError('This station needs a supported MP3 stream or the ICI adapter; other HLS/AAC streams are not supported.') from None
 
 
 def base_url(value: str | None) -> str:
