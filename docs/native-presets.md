@@ -154,26 +154,32 @@ routine. Existing runtime timezone/restart semantics remain those of #18.
 
 ### Starter stations
 
-**Stations → Add starter stations** (`POST /api/stations/starter` with a JSON
-object) adds six public stream suggestions: CHOM 97.7, Énergie Montréal 94.3,
-CBC **Radio One** Montréal (not CBC Music), The Buzz 99.9, ICI Première Montréal
-95.1 and Star 92.9. No speaker selection or `WISP_BASE_URL` is needed to save them.
-Playback still requires the normal radio setup and an explicit listening test.
+`app/data/stations.seed.json` is bundled initial data, not a third user-managed
+configuration file. `CONFIG_FILE` (default `config.json`, `.wisp-dev.json` for
+`task up`) stores schedules. `FAVORITES_FILE` defaults to `favorites.json` beside
+`CONFIG_FILE`; it stores the station library and native preset favorite records,
+not audio. Persist both runtime files across container replacement.
 
-The import is deliberately optional rather than a startup seed: an empty library
-and a user's deletions are valid choices. Opening Stations or restarting Wisp
-never restores deleted stations. Clicking the action again can add removed
-suggestions back as new records; archived playback links remain unchanged.
-Repeated requests skip visible entries with the same exact URL or a matching
-trimmed, case-insensitive name, retaining their names, URLs and IDs. Custom
-entries, favorites and schedules are untouched. A custom URL under a starter's
-name takes precedence. The whole batch is saved atomically; a storage error adds
-none. The UI blocks repeat clicks while saving and never retries writes itself.
+On the first station-library listing, Wisp imports the six seed suggestions once,
+including into an existing empty library on upgrade: CHOM 97.7, Énergie Montréal
+94.3, CBC **Radio One** Montréal (not CBC Music), The Buzz 99.9, ICI Première
+Montréal 95.1 and Star 92.9. No import button, speaker selection or `WISP_BASE_URL`
+is needed. Playback still requires normal radio setup and an explicit test.
+
+The additions and `station_seed_version: 1` marker are saved atomically in
+`favorites.json`. Existing exact URLs or trimmed, case-insensitive names win,
+including archived/deleted records. Custom entries, IDs, favorites and schedules
+are preserved. Restarts, reads and later removals do not apply the seed again.
+Do not delete the runtime file or its marker to reset the library: that removes
+the record that seeding already happened. A full or unwritable store reports an
+warning without replacing existing data or marking the seed applied. Existing
+records remain readable, removable and usable for playback; resolve the storage
+problem and refresh the library to retry initialization.
 
 The bundled URLs are starting points, not hardware-qualified sources. AAC/MP3,
 HTTPS redirects and CBC/ICI HLS playlists may not work on every SoundTouch
 firmware. A successful HTTP response is not proof of speaker compatibility or
-sound, and adding these entries does not mark them ready. Wisp does not fetch the
-streams during import. Playback, button assignment and scheduling remain separate,
-explicit actions. Broadcasters may change their URLs; manually add a replacement
-when needed rather than silently rewriting a user's saved source.
+sound, and seeding does not mark stations ready or fetch their streams. Playback,
+button assignment and scheduling remain separate, explicit actions. Broadcasters
+may change URLs; manually add a replacement rather than silently rewriting saved
+sources. Editing the bundled seed does not change a previously seeded library.

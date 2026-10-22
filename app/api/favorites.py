@@ -75,19 +75,15 @@ def radio(favorite_id: str) -> Any:
 
 @favorites_bp.get('/api/stations')
 def list_stations() -> Any:
-    return jsonify(stations=favorites.stations(), removal_notice=favorites.REMOVAL_NOTICE)
+    warnings: list[str] = []
+    stations = favorites.stations(seed_warnings=warnings)
+    return jsonify(stations=stations, removal_notice=favorites.REMOVAL_NOTICE, seed_warning=' '.join(warnings))
 
 
 @favorites_bp.post('/api/stations')
 def add_station() -> Any:
     data = body()
     return jsonify(station=favorites.add_station(data.get('name'), data.get('url'))), 201
-
-
-@favorites_bp.post('/api/stations/starter')
-def add_starter_stations() -> Any:
-    body()  # Same JSON and same-origin guard as other library writes.
-    return jsonify(favorites.add_starter_stations())
 
 
 @favorites_bp.delete('/api/stations/<station_id>')

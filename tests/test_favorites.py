@@ -20,6 +20,7 @@ def rig(monkeypatch, tmp_path):
     monkeypatch.setenv('FAVORITES_FILE', str(tmp_path / 'favorites.json'))
     monkeypatch.delenv('WISP_BASE_URL', raising=False)
     monkeypatch.delenv('WISP_RADIO_ALLOWED_HOSTS', raising=False)
+    favorites._save({'version': 1, 'favorites': {}, 'station_seed_version': 1})
     favorites._tokens.clear()
     playback.reset()
     monkeypatch.setattr(favorites.discovery, 'resolve_device', lambda *a: dict(DEVICE))
@@ -46,10 +47,11 @@ def make_plan(slot=1):
 
 def test_preview_does_not_write_and_explicit_confirmation_preserves_other_slots(rig):
     slots, calls = rig
+    before = favorites.path().read_bytes()
     slots[2] = {**ITEM, 'location': 'old-other', 'name': 'Existing NAS'}
     plan = make_plan()
     assert not calls
-    assert not favorites.path().exists()
+    assert favorites.path().read_bytes() == before
     result = favorites.confirm('Bedroom', plan['plan_id'])
     assert result['state'] == 'readback_matched'
     assert len(calls) == 1
@@ -338,59 +340,72 @@ def test_station_direct_play_pins_device_without_preset_mutation(rig, monkeypatc
     assert not rig[1]
 
 
-def test_starters_are_explicit_idempotent_and_library_only(rig, monkeypatch):
+def test_seed_initializes_missing_store_once_without_speakers(rig, monkeypatch):
+    favorites.path().unlink()
     def forbidden(*args, **kwargs):
-        pytest.fail('Starter import must not access speakers or start playback')
+        pytest.fail('Seed must not access speakers or start playback')
     monkeypatch.setattr(favorites.discovery, 'resolve_device', forbidden)
     monkeypatch.setattr(library, 'read_presets', forbidden)
     monkeypatch.setattr(library, 'store_preset', forbidden)
     monkeypatch.setattr(playback, 'manual', forbidden)
-    assert favorites.stations() == []
-    assert not favorites.path().exists()
-    assert favorites.add_starter_stations() == {'added': 6, 'skipped': 0}
-    saved = favorites.path().read_bytes()
-    assert favorites.add_starter_stations() == {'added': 0, 'skipped': 6}
-    assert favorites.path().read_bytes() == saved
     assert len(favorites.stations()) == 6
+    before = favorites.path().read_bytes()
+    assert len(favorites.stations()) == 6
+    assert favorites.path().read_bytes() == before
+    assert favorites._load()['station_seed_version'] == 1
     assert all('ready' not in item for item in favorites.stations())
     assert not rig[1]
 
 
-def test_starters_preserve_custom_names_urls_favorites_and_removed_links(rig):
-    name, url = favorites.STARTER_STATIONS[0]
-    renamed = favorites.add_station('My radio', url)
-    custom = favorites.add_station('  ' + favorites.STARTER_STATIONS[1][0].upper() + '  ', 'https://radio.example/custom')
-    other = favorites.add_station('Custom', 'https://radio.example/other')
+def test_seed_upgrades_empty_store_once_and_never_reseeds_removals(rig):
+    favorites._save({'version': 1, 'favorites': {}})
+    for item in favorites.stations():
+        favorites.remove_station(item['id'])
+    assert favorites.stations() == []
+    before = favorites.path().read_bytes()
+    assert favorites._load()['station_seed_version'] == 1
+    assert favorites.path().read_bytes() == before
+
+
+def test_seed_preserves_custom_names_urls_favorites_and_archived_links(rig):
+    import json
+    seed = json.loads((favorites.Path(favorites.__file__).resolve().parents[1] / 'data/stations.seed.json').read_text())['stations']
+    renamed = favorites.add_station('My radio', seed[0]['url'])
+    custom = favorites.add_station('  ' + seed[1]['name'].upper() + '  ', 'https://radio.example/custom')
+    removed = favorites.add_station(seed[2]['name'], seed[2]['url'])
+    favorites.remove_station(removed['id'])
     document = favorites._load()
+    document.pop('station_seed_version')
     document['favorites']['existing'] = {'name': 'Keep unchanged'}
+    document['custom_metadata'] = {'untouched': True}
     favorites._save(document)
-    assert favorites.add_starter_stations() == {'added': 4, 'skipped': 2}
-    for item in (renamed, custom, other):
+    assert len(favorites.stations()) == 5
+    for item in (renamed, custom):
         assert favorites.station(item['id']) == item
-    assert favorites._load()['favorites'] == document['favorites']
-    favorites.remove_station(renamed['id'])
-    assert len(favorites.stations()) == 6  # Reads never restore removed starters.
-    assert favorites.add_starter_stations() == {'added': 1, 'skipped': 5}
-    assert favorites.station(renamed['id'], allow_removed=True) == {**renamed, 'removed': True}
-    assert any(item['name'] == name and item['id'] != renamed['id'] for item in favorites.stations())
+    loaded = favorites._load()
+    assert loaded['favorites'] == document['favorites']
+    assert loaded['custom_metadata'] == document['custom_metadata']
+    assert favorites.station(removed['id'], allow_removed=True) == {**removed, 'removed': True}
 
 
-def test_concurrent_starter_imports_do_not_duplicate(rig):
+def test_concurrent_initial_reads_seed_once(rig):
     from concurrent.futures import ThreadPoolExecutor
+    favorites.path().unlink()
     with ThreadPoolExecutor(max_workers=4) as pool:
-        results = list(pool.map(lambda _: favorites.add_starter_stations(), range(4)))
-    assert sum(result['added'] for result in results) == 6
-    assert len(favorites.stations()) == 6
+        results = list(pool.map(lambda _: favorites.stations(), range(4)))
+    assert all(result == results[0] for result in results)
+    assert len(results[0]) == 6
 
 
-def test_starters_capacity_and_failed_write_are_atomic(rig, monkeypatch):
+def test_seed_capacity_and_failed_write_are_atomic(rig, monkeypatch):
     document = {'version': 1, 'favorites': {}, 'stations': {
         str(i): {'id': str(i), 'name': str(i), 'url': f'https://radio.example/{i}'}
         for i in range(495)}}
     favorites._save(document)
     before = favorites.path().read_bytes()
-    with pytest.raises(ValueError, match='storage is full'):
-        favorites.add_starter_stations()
+    warnings = []
+    assert len(favorites.stations(seed_warnings=warnings)) == 495
+    assert 'storage is full' in warnings[0]
     assert favorites.path().read_bytes() == before
     document['stations'] = {}
     favorites._save(document)
@@ -398,20 +413,50 @@ def test_starters_capacity_and_failed_write_are_atomic(rig, monkeypatch):
     def fail(*args):
         raise OSError('disk full')
     monkeypatch.setattr(favorites.os, 'replace', fail)
-    with pytest.raises(ValueError, match='could not be saved'):
-        favorites.add_starter_stations()
+    warnings = []
+    assert favorites.stations(seed_warnings=warnings) == []
+    assert 'could not be saved' in warnings[0]
     assert favorites.path().read_bytes() == before
 
 
-def test_starter_api_requires_json_same_origin_and_no_get_mutation(rig):
+def test_seed_marks_already_populated_store_and_does_not_overwrite_future_marker(rig):
+    favorites.path().unlink()
+    favorites.stations()
+    document = favorites._load()
+    document.pop('station_seed_version')
+    favorites._save(document)
+    assert len(favorites.stations()) == 6
+    assert favorites._load()['station_seed_version'] == 1
+    document['station_seed_version'] = 2
+    favorites._save(document)
+    before = favorites.path().read_bytes()
+    favorites.stations()
+    assert favorites.path().read_bytes() == before
+
+
+def test_starter_import_api_is_removed(rig):
     app = Flask(__name__)
     app.register_blueprint(favorites_bp)
     client = app.test_client()
-    endpoint = '/api/stations/starter'
-    assert client.get(endpoint).status_code == 405
-    assert client.post(endpoint).status_code == 400
-    assert client.post(endpoint, json={}, headers={'Origin': 'https://elsewhere.example'}).status_code == 400
-    assert client.post(endpoint, json={}, headers={'Sec-Fetch-Site': 'cross-site'}).status_code == 400
-    assert not favorites.path().exists()
-    assert client.post(endpoint, json={}).json == {'added': 6, 'skipped': 0}
-    assert client.post(endpoint, json={}).json == {'added': 0, 'skipped': 6}
+    assert client.post('/api/stations/starter', json={}).status_code == 405
+
+
+def test_seed_failure_does_not_block_existing_playback_or_removal(rig, monkeypatch):
+    saved = favorites.add_station('Existing', 'https://radio.example/live')
+    document = favorites._load()
+    document.pop('station_seed_version')
+    document['favorites']['existing'] = {'name': 'Existing favorite'}
+    favorites._save(document)
+    def fail(*args):
+        raise favorites.FavoriteError('Seed unavailable')
+    monkeypatch.setattr(favorites, '_seed_stations', fail)
+    app = Flask(__name__)
+    app.register_blueprint(favorites_bp)
+    result = app.test_client().get('/api/stations')
+    assert result.status_code == 200
+    assert result.json['seed_warning'] == 'Seed unavailable'
+    assert result.json['stations'] == [saved]
+    assert favorites.get('existing') == {'name': 'Existing favorite'}
+    assert favorites.station_descriptor(saved['id'])['audio']['streamUrl'] == saved['url']
+    favorites.remove_station(saved['id'])
+    assert favorites.stations() == []

@@ -432,6 +432,7 @@ def test_seventh_station_schedule_roundtrip_plays_without_any_preset(device, mon
     from app.scheduler import jobs
     monkeypatch.setenv('FAVORITES_FILE', str(tmp_path / 'favorites.json'))
     monkeypatch.setenv('WISP_BASE_URL', 'http://wisp.local:9001')
+    initial_count = len(favorites.stations())
     saved = [favorites.add_station(f'Radio {index}', f'https://radio.example/{index}') for index in range(7)]
     chosen = saved[-1]
     mutations = []
@@ -447,7 +448,7 @@ def test_seventh_station_schedule_roundtrip_plays_without_any_preset(device, mon
     config.write_text(json.dumps(mutations[0]['data']))
     schedule = jobs._normalize_schedule(json.loads(config.read_text()), 'Room', 0)
     favorites.remove_station(chosen['id'])
-    assert len(favorites.stations()) == 6
+    assert len(favorites.stations()) == initial_count + 6
     monkeypatch.setattr(favorites, 'capabilities', lambda _: {'/select'})
     monkeypatch.setattr(library, 'read_sources', lambda _: [{'source': 'LOCAL_INTERNET_RADIO', 'ready': True}])
     def select(ip, content, **kwargs):

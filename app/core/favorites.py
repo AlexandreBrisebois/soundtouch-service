@@ -331,9 +331,16 @@ def descriptor(favorite_id: str) -> dict[str, Any]:
 REMOVAL_NOTICE = 'Remove from the station library only. Existing speaker presets, schedules and current audio stay intact. Playback metadata is retained privately so those links keep working.'
 
 
-def stations() -> list[dict[str, Any]]:
+def stations(*, seed_warnings: list[str] | None = None) -> list[dict[str, Any]]:
     with _lock:
-        return [copy.deepcopy(value) for value in _load().get('stations', {}).values() if not value.get('removed')]
+        document = _load()
+        try:
+            document = _seed_stations(copy.deepcopy(document))
+        except FavoriteError as exc:
+            # A seed failure must not disable existing records or playback links.
+            if seed_warnings is not None:
+                seed_warnings.append(str(exc))
+        return [copy.deepcopy(value) for value in document.get('stations', {}).values() if not value.get('removed')]
 
 
 def add_station(name: Any, url: Any) -> dict[str, Any]:
@@ -351,37 +358,37 @@ def add_station(name: Any, url: Any) -> dict[str, Any]:
     return copy.deepcopy(value)
 
 
-# Public starting points, not firmware-qualified playback sources. Never seeded
-# on startup: deletion must remain a user choice until another explicit import.
-STARTER_STATIONS = (
-    ('CHOM 97.7', 'https://playerservices.streamtheworld.com/api/livestream-redirect/CHOMFMAAC.aac'),
-    ('Énergie Montréal 94.3', 'https://playerservices.streamtheworld.com/api/livestream-redirect/CKMFFMAAC.aac'),
-    ('CBC Radio One Montréal', 'https://cbcradiolive.akamaized.net/hls/live/2041030/ES_R1EMT/master.m3u8'),
-    ('The Buzz 99.9', 'https://playerservices.streamtheworld.com/api/livestream-redirect/WBTZFM.mp3'),
-    ('ICI Première Montréal 95.1', 'https://rcavliveaudio.akamaized.net/hls/live/2006635/P-2QMTL0_MTL/master.m3u8'),
-    ('Star 92.9', 'https://live.amperwave.net/direct/vox-wezffmmp3-imc'),
-)
+def _seed_stations(document: dict[str, Any]) -> dict[str, Any]:
+    """Apply the bundled library seed once, including upgrades from empty stores.
 
-
-def add_starter_stations() -> dict[str, int]:
-    """Atomically add missing suggestions without overwriting library choices."""
-    with _lock:
-        document = _load()
+    Called under _lock only when listing the station library. Archived entries participate in
+    deduplication, so an earlier deliberate removal is never resurrected.
+    """
+    if document.get('station_seed_version') is not None:
+        return document
+    try:
+        seed = json.loads((Path(__file__).resolve().parents[1] / 'data' / 'stations.seed.json').read_text(encoding='utf-8'))
+        if seed['version'] != 1 or not isinstance(seed['stations'], list):
+            raise ValueError('Seed schema')
         entries = document.setdefault('stations', {})
-        active = [item for item in entries.values() if not item.get('removed')]
-        urls = {item['url'] for item in active}
-        names = {item['name'].strip().casefold() for item in active}
+        urls = {item['url'] for item in entries.values()}
+        names = {item['name'].strip().casefold() for item in entries.values()}
         additions = []
-        for name, url in STARTER_STATIONS:
+        for item in seed['stations']:
+            name, url = _name(item['name']), _safe_url(item['url'])
             if url in urls or name.casefold() in names:
                 continue
-            additions.append({'id': uuid.uuid4().hex, 'name': _name(name), 'url': _safe_url(url)})
-        if len(entries) + len(additions) > 500:
-            raise FavoriteError('Station storage is full. No starter stations were added.')
-        if additions:
-            entries.update({item['id']: item for item in additions})
-            _save(document)
-        return {'added': len(additions), 'skipped': len(STARTER_STATIONS) - len(additions)}
+            additions.append({'id': uuid.uuid4().hex, 'name': name, 'url': url})
+            urls.add(url)
+            names.add(name.casefold())
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        raise FavoriteError('Station seed could not be loaded. Existing saved data was not replaced.') from None
+    if len(entries) + len(additions) > 500:
+        raise FavoriteError('Station storage is full. The seed was not applied; existing saved data was not replaced.')
+    entries.update({item['id']: item for item in additions})
+    document['station_seed_version'] = 1
+    _save(document)
+    return document
 
 
 def station(station_id: str, *, allow_removed: bool = False) -> dict[str, Any]:

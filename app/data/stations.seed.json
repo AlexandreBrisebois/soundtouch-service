@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "stations": [
+    {
+      "name": "CHOM 97.7",
+      "url": "https://playerservices.streamtheworld.com/api/livestream-redirect/CHOMFMAAC.aac"
+    },
+    {
+      "name": "Énergie Montréal 94.3",
+      "url": "https://playerservices.streamtheworld.com/api/livestream-redirect/CKMFFMAAC.aac"
+    },
+    {
+      "name": "CBC Radio One Montréal",
+      "url": "https://cbcradiolive.akamaized.net/hls/live/2041030/ES_R1EMT/master.m3u8"
+    },
+    {
+      "name": "The Buzz 99.9",
+      "url": "https://playerservices.streamtheworld.com/api/livestream-redirect/WBTZFM.mp3"
+    },
+    {
+      "name": "ICI Première Montréal 95.1",
+      "url": "https://rcavliveaudio.akamaized.net/hls/live/2006635/P-2QMTL0_MTL/master.m3u8"
+    },
+    {
+      "name": "Star 92.9",
+      "url": "https://live.amperwave.net/direct/vox-wezffmmp3-imc"
+    }
+  ]
+}
