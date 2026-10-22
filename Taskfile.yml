@@ -7,6 +7,15 @@ env:
   CONFIG_FILE: '{{.ROOT_DIR}}/.wisp-dev.json'
 
 tasks:
+  spec:check:
+    desc: Validate all OpenSpec specs and changes
+    dir: '{{.ROOT_DIR}}'
+    preconditions:
+      - sh: test "$(openspec --version)" = '1.14.3'
+        msg: Install @fission-ai/openspec@1.14.3 before running spec:check
+    cmds:
+      - openspec validate --all --strict --no-interactive
+
   up:
     desc: Start local Wisp
     dir: '{{.ROOT_DIR}}'

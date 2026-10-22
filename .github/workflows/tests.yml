@@ -9,6 +9,22 @@ on:
     - cron: "0 4 * * 1"
 
 jobs:
+  spec:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install pinned OpenSpec CLI
+        run: npm install --global @fission-ai/openspec@1.14.3
+      - name: Validate all specs and changes
+        run: openspec validate --all --strict --no-interactive
+
   pytest:
     runs-on: ubuntu-latest
 

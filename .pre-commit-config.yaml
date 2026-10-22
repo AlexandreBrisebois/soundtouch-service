@@ -1,4 +1,13 @@
 repos:
+  - repo: local
+    hooks:
+      - id: openspec
+        name: OpenSpec strict validation
+        entry: task spec:check
+        language: system
+        files: ^(openspec/|Taskfile\.yml$|\.pre-commit-config\.yaml$|\.github/workflows/tests\.yml$)
+        pass_filenames: false
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.17.1
     hooks:

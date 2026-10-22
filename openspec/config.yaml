@@ -9,19 +9,24 @@ context: |
 
 rules:
   proposal:
+    - Bound scope and separate source observations from proposed changes.
     - State any effect on speaker ownership, volume safety, physical presets, and scheduling.
     - Separate offline-tested behavior from behavior that still needs real-speaker qualification.
   specs:
-    - Describe observed or tested behavior, not aspirational hardware capabilities.
+    - Specify observable outcomes and failure behavior with concrete scenarios.
+    - Keep each capability cohesive with a clear owner; reference shared behavior rather than duplicating it.
+    - Distinguish source-derived baseline behavior from proposed or hardware-unqualified capabilities.
+  design:
+    - Trace relevant current source and ownership before describing the change.
+    - Explain meaningful seams, failure handling, and tradeoffs without prescribing incidental structure.
+  tasks:
+    - Use bounded tasks linked to acceptance scenarios and the affected capability owner.
+    - Name exact checks and expected evidence; distinguish isolated tests from real-speaker and audibility qualification.
 
-# Per-operation guidance (optional)
-# Add advisory guidance for how apply and archive work should be conducted.
-# This is separate from artifact rules above.
-# Example:
-#   operations:
-#     apply:
-#       guidance:
-#         - Keep test summaries concise
-#     archive:
-#       guidance:
-#         - Summarize the archive outcome before finishing
+operations:
+  apply:
+    guidance:
+      - Mark a task complete only when its acceptance checks pass; record actual evidence and remaining blockers.
+  archive:
+    guidance:
+      - Reconcile acceptance evidence and remaining tasks before archiving; run strict noninteractive validation.
