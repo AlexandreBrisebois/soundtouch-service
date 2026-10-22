@@ -219,3 +219,6 @@ favorites.json
 
 # Local container testing state
 .wisp-container/
+
+# Local Wisp backups
+/.wisp-backups/
