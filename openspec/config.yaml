@@ -1,0 +1,27 @@
+schema: spec-driven
+
+context: |
+  Wisp's primary product goal is calm, dependable scheduled audio for a Bose
+  SoundTouch home. Prioritize devices and scheduling; radio, libraries, UI, and
+  deployment support that goal. Treat automated contract tests and real-speaker
+  qualification as separate evidence: accepted commands and speaker-reported
+  playback do not prove audible sound or hardware compatibility.
+
+rules:
+  proposal:
+    - State any effect on speaker ownership, volume safety, physical presets, and scheduling.
+    - Separate offline-tested behavior from behavior that still needs real-speaker qualification.
+  specs:
+    - Describe observed or tested behavior, not aspirational hardware capabilities.
+
+# Per-operation guidance (optional)
+# Add advisory guidance for how apply and archive work should be conducted.
+# This is separate from artifact rules above.
+# Example:
+#   operations:
+#     apply:
+#       guidance:
+#         - Keep test summaries concise
+#     archive:
+#       guidance:
+#         - Summarize the archive outcome before finishing

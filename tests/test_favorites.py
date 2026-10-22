@@ -5,7 +5,7 @@ import pytest
 from flask import Flask
 
 from app.api.favorites import favorites_bp
-from app.core import favorites, library, playback, status
+from app.core import favorites, library, playback, radio_relay, status
 
 DEVICE = {'device_id': 'ABC', 'ip': '192.0.2.1', 'name': 'Bedroom'}
 ACCOUNT = 'server-uuid/0'
@@ -357,6 +357,27 @@ def test_seed_initializes_missing_store_once_without_speakers(rig, monkeypatch):
     assert not rig[1]
 
 
+def test_seed_manifest_changes_only_chom_to_verified_mp3():
+    import json
+    seed = json.loads((favorites.Path(favorites.__file__).resolve().parents[1] / 'data/stations.seed.json').read_text())
+    assert seed == {
+        'version': 1,
+        'stations': [
+            {'name': 'CHOM 97.7', 'url': radio_relay.CHOM_MP3_URL},
+            {'name': 'Énergie Montréal 94.3', 'url':
+             'https://playerservices.streamtheworld.com/api/livestream-redirect/CKMFFMAAC.aac'},
+            {'name': 'CBC Radio One Montréal', 'url':
+             'https://cbcradiolive.akamaized.net/hls/live/2041030/ES_R1EMT/master.m3u8'},
+            {'name': 'The Buzz 99.9', 'url':
+             'https://playerservices.streamtheworld.com/api/livestream-redirect/WBTZFM.mp3'},
+            {'name': 'ICI Première Montréal 95.1', 'url':
+             'https://rcavliveaudio.akamaized.net/hls/live/2006635/P-2QMTL0_MTL/master.m3u8'},
+            {'name': 'Star 92.9', 'url':
+             'https://live.amperwave.net/direct/vox-wezffmmp3-imc'},
+        ],
+    }
+
+
 def test_seed_upgrades_empty_store_once_and_never_reseeds_removals(rig):
     favorites._save({'version': 1, 'favorites': {}})
     for item in favorites.stations():
@@ -367,25 +388,36 @@ def test_seed_upgrades_empty_store_once_and_never_reseeds_removals(rig):
     assert favorites.path().read_bytes() == before
 
 
-def test_seed_preserves_custom_names_urls_favorites_and_archived_links(rig):
+def test_seed_preserves_custom_names_urls_favorites_schedules_and_archived_links(
+        rig, monkeypatch, tmp_path):
     import json
     seed = json.loads((favorites.Path(favorites.__file__).resolve().parents[1] / 'data/stations.seed.json').read_text())['stations']
     renamed = favorites.add_station('My radio', seed[0]['url'])
     custom = favorites.add_station('  ' + seed[1]['name'].upper() + '  ', 'https://radio.example/custom')
+    legacy = favorites.add_station('Legacy CHOM', radio_relay.CHOM_LEGACY_AAC_URL)
     removed = favorites.add_station(seed[2]['name'], seed[2]['url'])
     favorites.remove_station(removed['id'])
     document = favorites._load()
     document.pop('station_seed_version')
     document['favorites']['existing'] = {'name': 'Keep unchanged'}
     document['custom_metadata'] = {'untouched': True}
+    existing_ids = set(document['stations'])
     favorites._save(document)
-    assert len(favorites.stations()) == 5
-    for item in (renamed, custom):
+    config = tmp_path / 'config.json'
+    config.write_text(json.dumps({'version': 1, 'schedules': {
+        'Bedroom': [{'name': 'Legacy CHOM schedule', 'station_id': legacy['id'], 'paused': False}]
+    }}))
+    monkeypatch.setenv('CONFIG_FILE', str(config))
+    config_before = config.read_bytes()
+    assert len(favorites.stations()) == 6
+    for item in (renamed, custom, legacy):
         assert favorites.station(item['id']) == item
     loaded = favorites._load()
+    assert existing_ids <= set(loaded['stations'])
     assert loaded['favorites'] == document['favorites']
     assert loaded['custom_metadata'] == document['custom_metadata']
     assert favorites.station(removed['id'], allow_removed=True) == {**removed, 'removed': True}
+    assert config.read_bytes() == config_before
 
 
 def test_concurrent_initial_reads_seed_once(rig):

@@ -8,6 +8,9 @@ from urllib.parse import urlsplit
 
 from app.core import radio_stream, radio_hls
 
+CHOM_LEGACY_AAC_URL = 'https://playerservices.streamtheworld.com/api/livestream-redirect/CHOMFMAAC.aac'
+CHOM_MP3_URL = 'https://playerservices.streamtheworld.com/api/livestream-redirect/CHOMFM.mp3'
+
 MAX_SESSIONS = 8
 _lock = threading.RLock()
 _sessions: dict[str, 'Session'] = {}
@@ -37,6 +40,8 @@ class Session(TypedDict):
 def stream_url(saved_url: str) -> str:
     # Known equivalent aliases, otherwise use an explicitly saved MP3 URL exactly.
     # The suffix is eligibility only: transport must validate actual MPEG frames.
+    if saved_url == CHOM_LEGACY_AAC_URL:
+        return CHOM_MP3_URL
     if saved_url == radio_hls.SAVED_URL:
         if not radio_hls.available():
             raise RelayError(radio_hls.unavailable_reason() or 'ICI converter support is unavailable.')

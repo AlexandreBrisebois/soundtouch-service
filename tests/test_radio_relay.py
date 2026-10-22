@@ -23,6 +23,7 @@ class Socket:
 def radio(device, monkeypatch):
     relay.reset()
     streams = []
+    urls = []
     monkeypatch.setattr(favorites, 'capabilities', lambda ip: set())
     monkeypatch.setenv('WISP_BASE_URL', 'http://192.0.2.10:9001')
     monkeypatch.setattr(favorites, 'station', lambda *a, **kw: {'url': SAVED})
@@ -38,6 +39,7 @@ def radio(device, monkeypatch):
             self.closed = True
     def open_stream(url):
         value = Upstream()
+        urls.append(url)
         streams.append(value)
         return value
     monkeypatch.setattr(radio_upstream, 'open_station_stream', open_stream)
@@ -53,7 +55,7 @@ def radio(device, monkeypatch):
             consumers.append((iterator, cleanup))
         return value
     monkeypatch.setattr(direct_radio, '_soap', soap)
-    yield streams, consumers
+    yield streams, consumers, urls
     for _, cleanup in consumers:
         cleanup()
     relay.reset()
@@ -324,6 +326,27 @@ def test_saved_custom_mp3_url_is_used_exactly_never_guessed():
     assert relay.stream_url(url) == url
     with pytest.raises(relay.RelayError):
         relay.stream_url('https://radio.example/live.m3u8')
+
+
+def test_exact_chom_legacy_alias_and_saved_mp3_variants_are_preserved():
+    assert relay.stream_url(relay.CHOM_LEGACY_AAC_URL) == relay.CHOM_MP3_URL
+    assert relay.stream_url(relay.CHOM_MP3_URL) == relay.CHOM_MP3_URL
+    query_variant = relay.CHOM_MP3_URL + '?provider=public'
+    assert relay.stream_url(query_variant) == query_variant
+    for edited in (relay.CHOM_LEGACY_AAC_URL + '?edited=1',
+                   relay.CHOM_LEGACY_AAC_URL.upper(),
+                   relay.CHOM_LEGACY_AAC_URL.replace('CHOMFMAAC', 'CHOMFMAAC2')):
+        with pytest.raises(relay.RelayError):
+            relay.stream_url(edited)
+
+
+def test_legacy_chom_uses_existing_gated_relay_ownership(device, radio, monkeypatch):
+    monkeypatch.setattr(favorites, 'station', lambda *a, **kw: {'url': relay.CHOM_LEGACY_AAC_URL})
+    op = start()
+    assert radio[2] == [relay.CHOM_MP3_URL]
+    assert op['outcome']['state'] == 'playing'
+    assert relay.for_device('A')['owner'] == op['outcome']['operation_id']
+    assert device[1][1:3] == [('A', 'volume', 0), ('A', 'volume', 5)]
 
 
 def test_schedule_readiness_preserves_native_but_explains_relay_prerequisites(device, radio, monkeypatch):

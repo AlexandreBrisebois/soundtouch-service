@@ -5,6 +5,23 @@ from app.core import radio_stream as stream
 SAVED = next(iter(stream.CANDIDATES))
 
 
+def test_direct_candidates_stay_http_only_and_exclude_chom_https_urls():
+    assert stream.CANDIDATES == {
+        'https://live.amperwave.net/direct/vox-wezffmmp3-imc':
+            'http://live.amperwave.net/direct/vox-wezffmmp3-imc',
+        'https://playerservices.streamtheworld.com/api/livestream-redirect/WBTZFM.mp3':
+            'http://playerservices.streamtheworld.com/api/livestream-redirect/WBTZFM.mp3',
+        'https://cbcradiolive.akamaized.net/hls/live/2041030/ES_R1EMT/master.m3u8':
+            'http://playerservices.streamtheworld.com/api/livestream-redirect/CBMEFM_CBC.mp3',
+    }
+    for url in (
+        'https://playerservices.streamtheworld.com/api/livestream-redirect/CHOMFMAAC.aac',
+        'https://playerservices.streamtheworld.com/api/livestream-redirect/CHOMFM.mp3',
+    ):
+        with pytest.raises(stream.StreamError):
+            stream.candidate(url)
+
+
 @pytest.fixture
 def network(monkeypatch):
     calls = []
