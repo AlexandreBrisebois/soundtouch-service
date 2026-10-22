@@ -167,37 +167,13 @@ assert.equal(ui.scheduleBinding().name,'Kitchen');
 ''')
 
 
-def test_radio_form_requires_capability_and_rejects_credential_urls():
-    checks('''
-getResponse=async()=>ok({favorites:[],sources:[],radio:{available:false,reason:'Source missing'}});
-await ui.open('Living Room'); assert.equal(el('preset-radio-form').hidden,true);
-getResponse=async()=>ok({favorites:[],sources:[],radio:{available:true}});
-await ui.open('Living Room'); assert.equal(el('preset-radio-form').hidden,false);
-el('preset-radio-url').value='https://user:secret@example.com/radio';
-el('preset-radio-choose').listeners.click();
-assert.equal(el('preset-selection').hidden,true);
-assert.match(el('presets-message').textContent,/without credentials/);
-assert.equal(calls.length,2);
-''')
-
-
-def test_radio_uses_same_explicit_preview_without_stream_fetch():
-    checks('''
-getResponse=async()=>ok({favorites:[],sources:[],radio:{available:true}});
-await ui.open('Living Room');
-el('preset-radio-url').value='https://radio.example/live.mp3';
-el('preset-radio-choose').listeners.click();
-el('preset-name').value='Calm radio';el('preset-slot').value='3';
-getResponse=async()=>ok({plan_id:'radio',name:'Calm radio',slot:3,replaces:'NAS playlist'});
-await ui.review();
-assert.equal(calls.length,2);
-assert.equal(calls[1].url,'/api/Living%20Room/preset-plans');
-const payload=JSON.parse(calls[1].opts.body);
-assert.equal(payload.radio_url,'https://radio.example/live.mp3');
-assert.equal(payload.item_id,undefined);
-assert.match(el('preset-confirm-text').textContent,/replaces “NAS playlist”/);
-assert.equal(calls.filter(c=>c.url.endsWith('/confirm')).length,0);
-''')
+def test_preset_panel_has_no_radio_assignment_controls():
+    html = (ROOT / 'app/templates/index.html').read_text()
+    script = (ROOT / 'app/static/presets.js').read_text()
+    assert 'preset-radio-form' not in html
+    assert 'preset-radio-url' not in html
+    assert 'radio_url' not in script
+    assert 'station_id' not in script
 
 
 def test_replacement_invalidates_old_favorite_card_immediately():

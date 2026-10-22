@@ -111,9 +111,6 @@
       sources.forEach(item => list.append(button(item.name + (item.ready ? '' : ' · unavailable'), () => {
         source = item; stack = []; el('preset-browser').hidden = true; browse(null, 1);
       }, !item.ready)));
-      const radio = data.radio || {};
-      el('preset-radio-help').textContent = radio.reason || 'Custom internet radio requires a compatible source. No speaker assignment has been changed.';
-      el('preset-radio-form').hidden = !radio.available;
     }
     async function open(name) {
       close(false); speaker = name; el('presets-panel').hidden = false;
@@ -122,8 +119,6 @@
       el('presets-title').textContent = `Presets · ${name}`;
       el('presets-title').focus();
       el('preset-browser').hidden = true;
-      el('preset-radio-form').hidden = true;
-      el('preset-radio-url').value = '';
       clear(el('preset-favorites')); clear(el('preset-sources'));
       message(pendingWrites.has(name) ? 'An earlier request may still be finishing. Refresh before making another change.' : 'Reading the speaker’s presets and music sources…');
       const ticket = gate.next(); busy(true);
@@ -185,9 +180,7 @@
       plan = null; el('preset-confirmation').hidden = true;
       try {
         const payload = {slot: Number(el('preset-slot').value), name: el('preset-name').value.trim()};
-        if (item.station_id) payload.station_id = item.station_id;
-        else if (item.radio_url) payload.radio_url = item.radio_url;
-        else payload.item_id = item.id;
+        payload.item_id = item.id;
         const result = await request(name, '/preset-plans', {...post(payload), signal: ticket.signal});
         if (!gate.current(ticket) || speaker !== name) return;
         plan = result;
@@ -263,18 +256,6 @@
     el('presets-close').addEventListener('click', () => close());
     el('presets-refresh').addEventListener('click', () => { if (speaker && !pendingWrites.has(speaker)) open(speaker); });
     el('preset-up').addEventListener('click', () => { const parentStack = stack.slice(0, -1); browse(parentStack[parentStack.length - 1] || null, 1, false, parentStack); });
-    el('preset-radio-choose').addEventListener('click', () => {
-      const value = el('preset-radio-url').value.trim();
-      try {
-        const parsed = new URL(value);
-        if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error('unsupported');
-      } catch (_) {
-        message('Use a direct http or https audio stream URL without credentials, query parameters or a fragment. A station webpage is not a stream.');
-        el('preset-radio-url').focus(); return;
-      }
-      choose({radio_url: value, name: '', presetable: true});
-      message('Name this station and choose a speaker button. Compatibility is checked by the speaker, not promised by the URL.');
-    });
     el('preset-review').addEventListener('click', review);
     el('preset-confirm').addEventListener('click', confirm);
     el('preset-cancel').addEventListener('click', () => { plan = null; el('preset-confirmation').hidden = true; el('preset-review').focus(); });

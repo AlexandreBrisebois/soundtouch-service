@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import hashlib
-import ipaddress
 import json
 import os
 from pathlib import Path
@@ -10,7 +9,11 @@ import shutil
 import socket
 import subprocess
 import sys
-from urllib.parse import urlsplit
+
+if __package__:
+    from scripts import startup_network
+else:
+    import startup_network
 
 LABEL = 'dev.wisp.checkout'
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,21 +29,14 @@ def name_for(root: Path) -> str:
 
 
 def private_ipv4(value: str) -> str:
-    address = ipaddress.IPv4Address(value)
-    if not any(address in ipaddress.ip_network(net) for net in
-               ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16')):
-        raise ValueError('Use a private LAN IPv4 address, not localhost or a container address.')
-    return str(address)
+    try:
+        return startup_network.private_ipv4(value)
+    except ValueError:
+        raise ValueError('Use a private LAN IPv4 address, not localhost or a container address.') from None
 
 
 def settings() -> tuple[str, str, str]:
-    base = os.getenv('WISP_BASE_URL', '')
-    parsed = urlsplit(base)
-    if (parsed.scheme != 'http' or not parsed.hostname or parsed.username or parsed.password
-            or parsed.path not in ('', '/') or parsed.query or parsed.fragment
-            or parsed.port != 9001):
-        raise ValueError('Set WISP_BASE_URL=http://YOUR_MAC_LAN_IP:9001 before starting.')
-    private_ipv4(parsed.hostname)
+    base = startup_network.resolve_base_url()
     parts = os.getenv('WISP_SPEAKER_IPS', '').split(',')
     if not 1 <= len(parts) <= 8 or any(not part.strip() for part in parts):
         raise ValueError('Provide SPEAKER_IPS as one to eight comma-separated speaker LAN IPs.')

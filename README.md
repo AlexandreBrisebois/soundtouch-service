@@ -208,14 +208,16 @@ shows the next run in the server's timezone, and can cancel pending automation/f
 See [the playback reliability contract](docs/playback-reliability.md) for safe-volume sequencing,
 manual priority, optional stable speaker IDs, failure behavior and remaining hardware checks.
 
-### Native presets (draft qualification)
+### Radio and native NAS presets (draft qualification)
 
-Keep an independent Stations library with Add and a visible Schedule action. Each station’s ⋯ menu contains Test playback, Assign to speaker button and Remove; playback and removal still require confirmation. Browse a NAS library already registered on a speaker, review a physical-button assignment, and bind a routine to that favorite. Compatible radio sources can use a Wisp-hosted metadata descriptor. Hardware qualification is still required; readiness and readback do not prove audible playback. See [setup, safety and qualification](docs/native-presets.md) before changing an existing button.
+Keep an independent Stations library with Add, Play, Schedule, and Remove actions. Wisp starts radio for the selected speaker or schedule without consuming or rewriting one of the six physical buttons. Native preset assignment remains available only for playable NAS folders or playlists already registered on the speaker, with preview and confirmation before a button changes. Existing speaker presets and legacy radio-favorite records are left intact. Hardware qualification is still required; an accepted request or readback does not prove audible playback. See [setup, safety and qualification](docs/native-presets.md) before changing an existing NAS button.
 
 The bundled `app/data/stations.seed.json` adds CHOM, Énergie Montréal, CBC Radio One Montréal, The Buzz, ICI Première Montréal and Star 92.9 to the library once, including on upgrade. Existing entries and deletions are preserved; playback, presets and schedules do not change. These streams still need testing on your speakers. See [seed behavior](docs/native-presets.md#starter-stations).
 
 ### Local container testing
 
 Use `task container:up SPEAKER_IPS=YOUR_SPEAKER_LAN_IP` to build this checkout with
-its bundled radio converter. See [the short container-testing guide](docs/container-testing.md)
-for the base URL, separate test data, and Docker Desktop networking checks.
+its bundled radio converter. Wisp derives the callback origin when exactly one private
+LAN address is available; otherwise set `WISP_BASE_URL=http://YOUR_LAN_IP:9001`.
+See [the short container-testing guide](docs/container-testing.md) for separate test
+data and Docker Desktop networking checks.

@@ -15,7 +15,7 @@ The UI SHALL expose station-library and native NAS-preset workflows as separate 
 
 #### Scenario: User selects station Schedule
 - **WHEN** the station action opens the schedule editor
-- **THEN** the radio station is selected without displaying or submitting irrelevant favorite, preset, or AUX controls
+- **THEN** the radio station is selected without displaying irrelevant favorite, preset, or AUX controls or submitting any non-null competing playback choice; null clearing fields MAY be sent for edit compatibility
 
 #### Scenario: User manages NAS presets
 - **WHEN** the user opens the physical-preset workflow

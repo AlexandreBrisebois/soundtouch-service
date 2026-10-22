@@ -96,10 +96,6 @@
         }
         const items = [
           menuItem('Test playback…', () => prompt('play', station), writing || !speaker),
-          menuItem('Assign to speaker button…', () => {
-            if (!el('stations-speaker').value) return;
-            deps.assign({...station}, el('stations-speaker').value);
-          }, writing || !speaker),
           menuItem('Remove…', () => prompt('remove', station), writing),
         ];
         function showMenu(last = false) {
@@ -184,7 +180,7 @@
       try {
         const result = await request('/api/stations', {signal: controller.signal});
         if (!active || ticket !== generation) return;
-        stations = result.stations || []; render(); message(result.seed_warning || `${stations.length} saved station${stations.length === 1 ? '' : 's'}. Saving is separate from assigning a speaker button.`);
+        stations = result.stations || []; render(); message(result.seed_warning || `${stations.length} saved station${stations.length === 1 ? '' : 's'}. Saving is separate from playback and scheduling.`);
         return true;
       } catch (error) { if (active && ticket === generation) message(error.message); }
     }

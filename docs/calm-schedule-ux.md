@@ -16,24 +16,24 @@ a user does not need to understand six physical presets to choose a radio statio
 - New schedules ask for music rather than silently selecting button 1. Existing
   schedules reopen in their correct mode. The existing paired on/off model stays
   unchanged; this slice does not introduce stop-only schedules.
-- A saved favorite may be NAS music or a radio assignment. Do not rename all
-  favorites “NAS”; do not imply that saving a station assigns a physical button.
+- A saved favorite may include a legacy radio assignment, but new physical-preset
+  assignment is NAS-only. Do not imply that saving a station assigns a button.
 - Existing NAS browsing is labelled **Music connected to this speaker**. It reads
   the selected speaker's registered sources; it is not network-wide discovery.
   Browsing and playing already-working folders remain unchanged.
 - Radio-library management and music-library / physical-button setup live in
   collapsed Settings sections, below devices or schedules. Native disclosure
   controls work with keyboard and do not fetch data or send speaker commands.
-  An explicit assignment action opens its Settings section before confirmation.
+  An explicit NAS assignment action opens its Settings section before confirmation.
 - Keep the existing station primary Schedule action and accessible overflow menu.
-  Test playback and physical button assignment belong in that menu, not beside
-  every ordinary schedule field.
+  Test playback belongs in that menu. Physical button assignment remains in the
+  separate NAS settings workflow, not beside ordinary station schedule fields.
 
 ## Next cohesive steps (not implemented here)
 
 Make the NAS browse flow start from a schedule with its speaker already chosen,
 use folder breadcrumbs and one clear selection action, and return to the intact
-unsaved schedule. Keep “Assign to speaker button” secondary. A future network
+unsaved schedule. Keep NAS “Assign to speaker button” secondary. A future network
 finder must distinguish “visible to this speaker” from “registered and ready”; it
 must not silently register, retry uncertain registrations, or overwrite presets.
 

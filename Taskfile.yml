@@ -16,6 +16,8 @@ tasks:
         test -x .venv/bin/python || {
           echo "Missing .venv/bin/python"; exit 1;
         }
+        WISP_BASE_URL=$(.venv/bin/python scripts/startup_network.py)
+        export WISP_BASE_URL
         mkdir .wisp-run 2>/dev/null || {
           echo "Run task down first; startup state already exists."; exit 1;
         }
@@ -42,6 +44,7 @@ tasks:
 
         ps -p "$pid" -o lstart= -o command= > .wisp-run/identity
         echo "Wisp process started: http://localhost:9001"
+        echo "Speaker callback: $WISP_BASE_URL"
         echo "Logs: tail -f .wisp.log"
         BASH
 

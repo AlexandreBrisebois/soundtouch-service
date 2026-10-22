@@ -174,19 +174,11 @@ def overview(speaker: str) -> dict[str, Any]:
     base = radio_base()
     ready = any(s['source'] == 'LOCAL_INTERNET_RADIO' and s['ready'] for s in sources)
     supported = capabilities(found['ip'])
-    blockers = []
-    if not base:
-        blockers.append('wisp_base_url_missing')
-    if not ready:
-        blockers.append('local_internet_radio_not_ready')
-    if '/storePreset' not in supported:
-        blockers.append('native_preset_programming_unavailable')
-    available = not blockers
     return {'favorites': saved, 'speaker_id': found['device_id'],
             'sources': [{k: s[k] for k in ('id', 'name', 'ready')} for s in sources if s['source'] == 'STORED_MUSIC'],
             'presets': [{'slot': slot, 'name': item['name'] if item else 'Empty'} for slot, item in slots.items()],
-            'radio': {'available': available, 'reason': 'Native radio buttons are not ready. See readiness details; experimental direct tests do not enable speaker buttons.' if not available else 'Hardware playback still needs testing.',
-                      'native_preset': {'available': available, 'blockers': blockers},
+            'radio': {'available': False, 'reason': 'Radio plays from Wisp without changing a physical speaker button.',
+                      'native_preset': {'available': False, 'blockers': ['radio_preset_assignment_unsupported']},
                       'station_playback': {'available': bool(base and ready and '/select' in supported),
                                            'requires_source': 'LOCAL_INTERNET_RADIO'},
                       'direct_test': {'experimental': True, 'requires_explicit_risk_acceptance': True,
@@ -212,29 +204,21 @@ def browse(speaker: str, data: dict[str, Any]) -> dict[str, Any]:
 
 
 def plan(speaker: str, data: dict[str, Any]) -> dict[str, Any]:
+    if 'station_id' in data or 'radio_url' in data:
+        raise FavoriteError('Radio stations play from Wisp and cannot be assigned to a physical speaker button.')
     found = device(speaker)
     slot = data.get('slot')
     if isinstance(slot, bool) or not isinstance(slot, int) or not 1 <= slot <= 6:
         raise FavoriteError('Choose a speaker button from 1 to 6.')
     name = _name(data.get('name'))
     kind = 'nas'
-    radio_url = None
-    if data.get('station_id') or data.get('radio_url') is not None:
-        kind = 'radio'
-        radio_url = station(str(data['station_id']))['url'] if data.get('station_id') else _safe_url(data['radio_url'])
-        base = radio_base()
-        if not base or not any(s['source'] == 'LOCAL_INTERNET_RADIO' and s['ready'] for s in library.read_sources(found['ip'])):
-            raise FavoriteError('Radio is not ready on this speaker. No preset was changed.')
-        favorite_id = uuid.uuid4().hex
-        item = {'source': 'LOCAL_INTERNET_RADIO', 'type': 'stationurl', 'presetable': True,
-                'name': name, 'location': f'{base}/api/radio/{favorite_id}'}
-    else:
-        item = _lookup(str(data.get('item_id', '')), 'item', found['device_id'])
-        if not item.get('playable') or not item.get('presetable') or not item.get('is_dir'):
-            raise FavoriteError('Choose a playable, preset-capable folder or playlist reported by the speaker.')
-        favorite_id = uuid.uuid4().hex
-        # Refresh source readiness; do not trust an earlier browse page.
-        _source(found['ip'], library.source_id('STORED_MUSIC:' + item['sourceAccount']))
+    item = _lookup(str(data.get('item_id', '')), 'item', found['device_id'])
+    if (item.get('source') != 'STORED_MUSIC' or not item.get('playable')
+            or not item.get('presetable') or not item.get('is_dir')):
+        raise FavoriteError('Choose a playable, preset-capable folder or playlist reported by the speaker.')
+    favorite_id = uuid.uuid4().hex
+    # Refresh source readiness; do not trust an earlier browse page.
+    _source(found['ip'], library.source_id('STORED_MUSIC:' + item['sourceAccount']))
     if '/storePreset' not in capabilities(found['ip']):
         raise FavoriteError('Speaker does not advertise native preset programming. Existing buttons are unchanged.')
     slots = library.read_presets(found['ip'])
@@ -242,7 +226,7 @@ def plan(speaker: str, data: dict[str, Any]) -> dict[str, Any]:
     if any(existing and library.same_content(existing, item) for key, existing in slots.items() if key != slot):
         raise FavoriteError('This collection is already assigned to another button. Use that button instead to preserve existing presets.')
     value = {'id': favorite_id, 'name': name, 'kind': kind, 'speaker_id': found['device_id'], 'slot': slot,
-             'state': 'saved', 'content': item, 'radio_url': radio_url, 'before': slots}
+             'state': 'saved', 'content': item, 'before': slots}
     previous = slots[slot]
     plan_id = _token('plan', found['device_id'], value)
     return {'plan_id': plan_id, 'name': name, 'slot': slot,
