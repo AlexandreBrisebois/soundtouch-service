@@ -114,7 +114,14 @@ def test_settings(monkeypatch):
     assert dev.settings() == ('http://192.168.1.10:9001', '192.168.1.2,192.168.1.3', 'America/Toronto')
 
 
-@pytest.mark.parametrize('url', ['', 'http://localhost:9001', 'https://192.168.1.10:9001',
+def test_settings_infers_base_url_when_override_is_absent(monkeypatch):
+    monkeypatch.delenv('WISP_BASE_URL', raising=False)
+    monkeypatch.setenv('WISP_SPEAKER_IPS', '192.168.1.2')
+    monkeypatch.setattr(dev.startup_network, 'resolve_base_url', lambda: 'http://192.168.1.10:9001')
+    assert dev.settings()[0] == 'http://192.168.1.10:9001'
+
+
+@pytest.mark.parametrize('url', ['http://localhost:9001', 'https://192.168.1.10:9001',
                                  'http://192.168.1.10:9002', 'http://192.168.1.10:9001/path',
                                  'http://user:pass@192.168.1.10:9001'])
 def test_settings_reject_unusable_base_url(monkeypatch, url):
@@ -180,6 +187,9 @@ def test_taskfile_keeps_native_tasks_and_has_container_tasks():
     text = (Path(__file__).parents[1] / 'Taskfile.yml').read_text()
     for task in ('up', 'down', 'tag', 'container:up', 'container:down', 'container:logs'):
         assert f'  {task}:\n' in text
+    resolver = 'WISP_BASE_URL=$(.venv/bin/python scripts/startup_network.py)'
+    assert resolver in text
+    assert text.index(resolver) < text.index('mkdir .wisp-run')
 
 
 @pytest.mark.parametrize('host', ['tcp://remote:2375', 'ssh://remote', 'npipe://pipe'])

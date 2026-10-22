@@ -468,6 +468,7 @@ def test_saved_favorite_canonicalizes_slot_and_preserves_legacy_edit(monkeypatch
     payload = {'name': 'Morning', 'days': ['monday'], 'on_time': '07:00', 'off_time': '08:00', 'preset': 1, 'volume': 10}
     if explicit:
         payload['favorite_id'] = favorite_id
+        payload['preset'] = None
     result = create_test_app().test_client().post('/api/Room/schedules', json=payload)
     assert result.status_code == 202
     assert queued[0]['data']['favorite_id'] == favorite_id
@@ -502,7 +503,7 @@ def test_station_schedule_keeps_archived_binding_and_device_pin(monkeypatch, leg
     assert reads == [(id, {'allow_removed': True})]
     assert devices == [('Room', 'ABC')]
     assert queued[0]['data']['station_id'] == id
-    assert queued[0]['data']['preset'] is None and queued[0]['data']['source'] is None
+    assert 'preset' not in queued[0]['data'] and 'source' not in queued[0]['data']
 
 
 def test_station_schedule_rejects_same_name_replacement_speaker(monkeypatch):
@@ -536,9 +537,29 @@ def test_new_station_schedule_needs_no_preset_and_rejects_dual_binding(monkeypat
     assert response.status_code == 202
     assert reads == [(id, {'allow_removed': False})]
     assert queued[0]['data']['station_id'] == id
-    assert queued[0]['data']['preset'] is None
+    assert 'preset' not in queued[0]['data']
     payload['favorite_id'] = 'a' * 32
     assert create_test_app().test_client().post('/api/Room/schedules', json=payload).status_code == 400
+
+
+@pytest.mark.parametrize('extra', [
+    {'favorite_id': 'a' * 32},
+    {'preset': 2},
+    {'source': 'AUX'},
+])
+def test_station_schedule_rejects_every_mixed_playback_kind_before_side_effects(monkeypatch, extra):
+    queued = []
+    monkeypatch.setattr('app.api.routes.jobs.config_queue.put', queued.append)
+    monkeypatch.setattr('app.api.routes.favorites.station', lambda *_a, **_kw: pytest.fail('must not resolve station'))
+    monkeypatch.setattr('app.api.routes.favorites.device', lambda *_a, **_kw: pytest.fail('must not inspect speaker'))
+    payload = {
+        'name': 'Morning', 'days': ['monday'], 'on_time': '07:00', 'off_time': '08:00',
+        'volume': 10, 'station_id': 'b' * 32, **extra,
+    }
+    response = create_test_app().test_client().post('/api/Room/schedules', json=payload)
+    assert response.status_code == 400
+    assert 'playback' in response.get_json()['errors']
+    assert not queued
 
 
 @pytest.mark.parametrize('value', [0, '0'])

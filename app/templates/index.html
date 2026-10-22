@@ -157,13 +157,6 @@
           <button class="preset-action" id="preset-test-confirm" type="button">Start quiet test</button>
           <button class="preset-action" id="preset-test-cancel" type="button">Cancel</button>
         </div>
-        <h3>Internet radio</h3><p class="preset-help" id="preset-radio-help"></p>
-        <div id="preset-radio-form" hidden>
-          <label for="preset-radio-url">Direct audio stream URL</label>
-          <input id="preset-radio-url" type="url" inputmode="url" autocomplete="off" spellcheck="false" maxlength="2048" placeholder="https://radio.example/live.mp3" aria-describedby="preset-radio-url-help">
-          <p class="preset-help" id="preset-radio-url-help">Use the audio stream, not the station’s webpage. URLs with credentials or query parameters are not supported. Wisp must stay available for this radio preset.</p>
-          <button class="preset-action" id="preset-radio-choose" type="button">Choose station</button>
-        </div>
       </section>
       </details>
     </div>
@@ -313,9 +306,9 @@
     </div>
     <div class="scroll-body stations-body">
       <p class="preset-help">Your radio library is separate from the six speaker buttons. Saving a station does not start playback or change any preset.</p>
-      <label class="form-label" for="stations-speaker">Play or assign on</label>
+      <label class="form-label" for="stations-speaker">Play on</label>
       <select class="form-input" id="stations-speaker" aria-describedby="stations-speaker-help"></select>
-      <p class="preset-help" id="stations-speaker-help">Choose a speaker to play a station or assign it to a button.</p>
+      <p class="preset-help" id="stations-speaker-help">Choose a speaker to play a station or prepare its schedule.</p>
       <p id="stations-message" role="status" aria-live="polite" aria-atomic="true"></p>
       <button class="preset-action" id="stations-refresh" type="button">Refresh stations</button>
       <div id="stations-confirmation" class="preset-confirmation" hidden>
@@ -335,7 +328,7 @@
         <input class="form-input" id="station-name" type="text" maxlength="100" required autocomplete="off">
         <label class="form-label" for="station-url">Direct audio stream URL</label>
         <input class="form-input" id="station-url" type="url" inputmode="url" maxlength="2048" required autocomplete="off" spellcheck="false" placeholder="https://radio.example/live.mp3" aria-describedby="station-url-help">
-        <p class="preset-help" id="station-url-help">Use a public http or https audio stream, not a station webpage. Credentials, query parameters and fragments are not supported. Stream compatibility is not guaranteed. Wisp must stay available for playback and radio presets.</p>
+        <p class="preset-help" id="station-url-help">Use a public http or https audio stream, not a station webpage. Credentials, query parameters and fragments are not supported. Stream compatibility is not guaranteed. Wisp must stay available for playback and schedules.</p>
         <button class="preset-action" id="stations-add" type="submit">Save station</button>
       </form>
     </div>
@@ -1211,12 +1204,6 @@ if (window.WispStationUI) {
     getSpeaker: () => currentSpeaker,
     navigate: showView,
     back: origin => { if (origin === 'speaker' && currentSpeaker) showView('speaker'); else loadHub(); },
-    assign: async (station, speaker) => {
-      openSpeaker(speaker);
-      const ready = await window.wispPresets.open(speaker);
-      if (!ready || activeView !== 'speaker' || currentSpeaker !== speaker) return;
-      window.wispPresets.choose({station_id: station.id, name: station.name, presetable: true});
-    },
     schedule: (station, speaker) => {
       openSpeaker(speaker);
       openForm();

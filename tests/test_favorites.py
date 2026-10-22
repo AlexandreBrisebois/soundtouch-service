@@ -158,19 +158,33 @@ def test_explicit_lan_stream_allowlist(rig, monkeypatch):
     assert favorites._safe_url('http://nas.local:8000/radio') == 'http://nas.local:8000/radio'
 
 
-def test_radio_descriptor_is_data_not_fetch_and_source_must_be_ready(rig, monkeypatch):
-    monkeypatch.setenv('WISP_BASE_URL', 'http://wisp.local:9001')
-    with pytest.raises(ValueError, match='not ready'):
-        favorites.plan('Bedroom', {'radio_url': 'https://radio.example/live.mp3', 'name': 'Station', 'slot': 1})
-    monkeypatch.setattr(library, 'read_sources', lambda ip: [{'source': 'LOCAL_INTERNET_RADIO', 'ready': True}])
-    plan = favorites.plan('Bedroom', {'radio_url': 'https://radio.example/live.mp3', 'name': 'Station', 'slot': 1})
-    result = favorites.confirm('Bedroom', plan['plan_id'])
-    value = favorites.get(result['favorite']['id'])
-    assert value['content']['location'] == f"http://wisp.local:9001/api/radio/{value['id']}"
+def test_legacy_radio_descriptor_remains_readable_without_fetch(rig):
+    value = {
+        'id': 'f' * 32, 'name': 'Station', 'kind': 'radio', 'speaker_id': 'ABC',
+        'slot': 1, 'state': 'readback_matched', 'radio_url': 'https://radio.example/live.mp3',
+        'content': {'source': 'LOCAL_INTERNET_RADIO', 'type': 'stationurl',
+                    'location': 'http://old-wisp/api/radio/' + 'f' * 32,
+                    'name': 'Station', 'presetable': True},
+    }
+    favorites._save({'version': 1, 'favorites': {value['id']: value}, 'station_seed_version': 1})
     descriptor = favorites.descriptor(value['id'])
     assert descriptor['audio']['streams'][0]['streamUrl'] == 'https://radio.example/live.mp3'
     assert descriptor['streamType'] == 'liveRadio'
     assert 'sourceAccount' not in value['content']
+
+
+@pytest.mark.parametrize('payload', [
+    {'station_id': 'a' * 32, 'name': 'Station', 'slot': 1},
+    {'radio_url': 'https://radio.example/live.mp3', 'name': 'Station', 'slot': 1},
+])
+def test_new_radio_preset_plan_is_rejected_before_device_or_storage(rig, monkeypatch, payload):
+    before = favorites.path().read_bytes()
+    monkeypatch.setattr(favorites, 'device', lambda *_a, **_kw: pytest.fail('must not inspect speaker'))
+    with pytest.raises(ValueError, match='cannot be assigned'):
+        favorites.plan('Bedroom', payload)
+    assert favorites.path().read_bytes() == before
+    assert not favorites._tokens
+    assert not rig[1]
 
 
 def test_api_requires_explicit_confirmation_and_same_origin(rig):
@@ -292,16 +306,23 @@ def test_station_duplicate_does_not_create_second_record(rig):
     assert len(favorites.stations()) == 1
 
 
-def test_station_removal_preserves_descriptor_and_physical_favorite(rig, monkeypatch):
+def test_station_removal_preserves_legacy_descriptor_and_physical_favorite(rig, monkeypatch):
     monkeypatch.setenv('WISP_BASE_URL', 'http://wisp.local:9001')
-    monkeypatch.setattr(library, 'read_sources', lambda _: [{'source': 'LOCAL_INTERNET_RADIO', 'ready': True}])
     saved = favorites.add_station('Radio', 'https://radio.example/live')
-    plan = favorites.plan('Bedroom', {'station_id': saved['id'], 'name': 'Morning', 'slot': 1})
-    favorite = favorites.confirm('Bedroom', plan['plan_id'])['favorite']
-    assert favorites.get(favorite['id'])['content']['location'].endswith('/api/radio/' + favorite['id'])
+    favorite = {
+        'id': 'f' * 32, 'name': 'Morning', 'kind': 'radio', 'speaker_id': 'ABC',
+        'slot': 1, 'state': 'readback_matched', 'radio_url': saved['url'],
+        'content': {'source': 'LOCAL_INTERNET_RADIO', 'type': 'stationurl',
+                    'location': 'http://old-wisp/api/radio/' + 'f' * 32,
+                    'name': 'Morning', 'presetable': True},
+    }
+    document = favorites._load()
+    document['favorites'][favorite['id']] = favorite
+    favorites._save(document)
+    rig[0][1] = copy.deepcopy(favorite['content'])
     favorites.remove_station(saved['id'])
     assert not favorites.stations()
-    assert len(rig[1]) == 1
+    assert not rig[1]
     assert favorites.station_descriptor(saved['id'])['audio']['streamUrl'] == 'https://radio.example/live'
     assert favorites.descriptor(favorite['id'])['audio']['streamUrl'] == 'https://radio.example/live'
     assert favorites.schedule_binding(favorite['id'], 'Bedroom')['id'] == favorite['id']
@@ -497,7 +518,8 @@ def test_seed_failure_does_not_block_existing_playback_or_removal(rig, monkeypat
 def test_radio_readiness_distinguishes_native_and_direct_diagnostic(rig):
     radio = favorites.overview('Bedroom')['radio']
     assert radio['available'] is False
-    assert radio['native_preset']['blockers'] == ['wisp_base_url_missing', 'local_internet_radio_not_ready']
+    assert radio['native_preset'] == {
+        'available': False, 'blockers': ['radio_preset_assignment_unsupported']}
     assert radio['station_playback']['available'] is False
     assert radio['direct_test']['experimental'] is True
     assert radio['direct_test']['automatic_schedules'] is False
@@ -509,6 +531,7 @@ def test_native_readiness_does_not_require_direct_diagnostic(rig, monkeypatch):
     monkeypatch.setenv('WISP_BASE_URL', 'http://wisp.local:9001')
     monkeypatch.setattr(library, 'read_sources', lambda _: [{'source': 'LOCAL_INTERNET_RADIO', 'ready': True}])
     radio = favorites.overview('Bedroom')['radio']
-    assert radio['available'] is True
-    assert radio['native_preset']['blockers'] == []
+    assert radio['available'] is False
+    assert radio['native_preset'] == {
+        'available': False, 'blockers': ['radio_preset_assignment_unsupported']}
     assert radio['station_playback']['available'] is False  # /select not advertised

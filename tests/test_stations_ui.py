@@ -31,14 +31,14 @@ const doc={getElementById:el,createElement:tag=>new Element(tag),get activeEleme
 const ok=body=>({ok:true,json:async()=>body});
 let response=async()=>ok({stations:[]});
 let current='Living Room';
-const calls=[],capabilityReads=[],assignments=[],plays=[],schedules=[];
+const calls=[],capabilityReads=[],plays=[],schedules=[];
 let capabilities=async()=>ok({available:true,mode:'native',requires_wisp_running:true});let favoriteCleared=0;
 let view='hub';
 const ui=api.create({document:doc,getSpeakers:()=>[{name:'Living Room'},{name:'Kitchen'}],getSpeaker:()=>current,
 fetch:async(url,opts)=>{if(url.endsWith('/readiness') || (url.endsWith('/direct-test') && !opts.method)){capabilityReads.push({url,opts});return capabilities(url,opts);} calls.push({url,opts});return response(url,opts);},
 navigate:name=>{view=name;ui.onViewChange(name);},back:name=>{view=name;ui.onViewChange(name);},
 schedule:(station,speaker)=>schedules.push({station,speaker}),clearFavorite:()=>favoriteCleared++,
-assign:(station,speaker)=>assignments.push({station,speaker}),onPlay:(result,speaker,options)=>plays.push({result,speaker,options})});
+onPlay:(result,speaker,options)=>plays.push({result,speaker,options})});
 const station={id:'jazz',name:'Jazz <img>',url:'https://radio.example/jazz'};
 const descendants=item=>[item,...item.children.flatMap(descendants)];
 const action=(label,index=0)=>descendants(el('stations-list').children[index]).find(child=>child.textContent===label);
@@ -58,7 +58,7 @@ def test_stations_page_accessible_separate_view():
     assert 'id="btn-hub-stations"' in html
     assert 'id="btn-speaker-stations"' in html
     assert '/app-static/stations.js' in html
-    assert 'if (!ready || activeView' in html
+    assert 'Assign to speaker button' not in html
     assert 'innerHTML' not in (ROOT / 'app/static/stations.js').read_text()
 
 
@@ -104,20 +104,11 @@ assert.match(el('stations-message').textContent,/not proof/);assert.equal(plays.
 ''')
 
 
-def test_assign_only_opens_existing_preview_flow():
-    checks('''
-response=async()=>ok({stations:[station]});await ui.open();
-await clickAction('Assign to speaker button…');
-assert.deepEqual(assignments,[{station,speaker:'Living Room'}]);
-assert.equal(calls.length,1);
-''')
-
-
 def test_no_speaker_does_not_prevent_library_management():
     checks('''
 current=null;response=async()=>ok({stations:[station]});await ui.open();
 assert.equal(el('stations-speaker').value,'');assert.equal(action('Test playback…').disabled,true);
-assert.equal(action('Assign to speaker button…').disabled,true);assert.equal(action('Remove…').disabled,false);
+assert.equal(action('Remove…').disabled,false);
 await clickAction('Remove…');
 assert.match(el('stations-confirm-text').textContent,/stay intact/);
 assert.match(el('stations-confirm-text').textContent,/retained privately/);
@@ -172,7 +163,7 @@ def test_station_can_open_schedule_without_preset_assignment():
 response=async()=>ok({stations:[station]});await ui.open();
 await clickAction('Schedule…');
 assert.deepEqual(schedules,[{station,speaker:'Living Room'}]);
-assert.equal(assignments.length,0);assert.equal(calls.length,1);
+assert.equal(calls.length,1);
 ''')
 
 
@@ -235,7 +226,7 @@ assert.equal(menu,'menuitem');assert.equal(toggle.attrs['aria-expanded'],'false'
 key(toggle,'ArrowDown');assert.equal(focused,action('Test playback…'));
 const panel=action('Test playback…').attrs.role && action('⋯').attrs['aria-controls'];assert.equal(panel,'station-menu-0');
 const menuNode=descendants(el('stations-list').children[0]).find(x=>x.attrs.role==='menu');
-key(menuNode,'ArrowDown');assert.equal(focused,action('Assign to speaker button…'));
+key(menuNode,'ArrowDown');assert.equal(focused,action('Remove…'));
 key(menuNode,'End');assert.equal(focused,action('Remove…'));
 key(menuNode,'ArrowDown');assert.equal(focused,action('Test playback…'));
 key(menuNode,'Escape');assert.equal(focused,toggle);assert.equal(menuNode.hidden,true);

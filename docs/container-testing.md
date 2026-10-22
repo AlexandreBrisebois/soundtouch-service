@@ -5,16 +5,24 @@ pull a published Wisp release or require an ICI activation flag.
 
 1. Start Docker Desktop (or a local Docker Engine on Linux).
 2. Stop native Wisp with `task down` so port 9001 is free.
-3. Use your computer's current LAN address, not localhost or a Docker VM address:
+3. With exactly one private LAN IPv4 address, Wisp selects it automatically:
+
+   ```sh
+   task container:up SPEAKER_IPS=YOUR_SPEAKER_LAN_IP
+   ```
+
+   If the host has multiple private interfaces, such as Wi-Fi plus a VPN, choose
+   the speaker-reachable address explicitly. Do not use localhost or a Docker VM
+   address:
 
    ```sh
    export WISP_BASE_URL=http://YOUR_COMPUTER_LAN_IP:9001
    task container:up SPEAKER_IPS=YOUR_SPEAKER_LAN_IP
    ```
 
-For several speakers, separate their IPs with commas (at most eight). If the base
-URL is already set in your Taskfile's `env:` section, you do not need to export it
-again. `SPEAKER_IPS` can alternatively be set as the `WISP_SPEAKER_IPS` environment
+For several speakers, separate their IPs with commas (at most eight). An explicit
+`WISP_BASE_URL` is validated and takes precedence over automatic selection.
+`SPEAKER_IPS` can alternatively be set as the `WISP_SPEAKER_IPS` environment
 variable. A native Python `.venv` is required for the small task runner, as with
 `task up`; the application itself runs in the Linux container.
 

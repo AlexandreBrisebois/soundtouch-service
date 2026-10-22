@@ -10,8 +10,8 @@ class Schedule(TypedDict):
     days: list[str] | None
     on_time: str | None
     off_time: str | None
-    preset: int | None
-    source: str | None
+    preset: NotRequired[int | None]
+    source: NotRequired[str | None]
     volume: int
     fade_in_duration: float
     fade_out_duration: float

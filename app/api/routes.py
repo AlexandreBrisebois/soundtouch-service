@@ -51,8 +51,6 @@ def _to_schedule(payload: Mapping[str, Any]) -> Schedule:
     "days": payload.get("days"),
     "on_time": payload.get("on_time"),
     "off_time": payload.get("off_time"),
-    "preset": payload.get("preset"),
-    "source": payload.get("source"),
     "volume": int(payload.get("volume", DEFAULT_VOLUME)),
     "fade_in_duration": float(payload.get("fade_in_duration", DEFAULT_FADE_IN_DURATION_SECONDS)),
     "fade_out_duration": float(payload.get("fade_out_duration", DEFAULT_FADE_OUT_DURATION_SECONDS)),
@@ -64,6 +62,9 @@ def _to_schedule(payload: Mapping[str, Any]) -> Schedule:
     schedule["station_id"] = str(payload["station_id"])
   if payload.get("favorite_id"):
     schedule["favorite_id"] = str(payload["favorite_id"])
+  if not payload.get("station_id"):
+    schedule["preset"] = payload.get("preset")
+    schedule["source"] = payload.get("source")
   return schedule
 
 
@@ -137,6 +138,15 @@ def _validate_schedule_payload(data: Any) -> tuple[SchedulePayload | None, dict[
     else:
       normalized["favorite_id"] = data["favorite_id"]
 
+  explicit_kinds = [
+    bool(data.get("station_id")),
+    bool(data.get("favorite_id")),
+    data.get("preset") not in ("", None),
+    data.get("source") not in ("", None),
+  ]
+  if sum(explicit_kinds) > 1:
+    errors["playback"] = "Choose exactly one station, favorite, speaker button, or AUX input."
+
   previous_name = data.get("previous_name")
   if previous_name in (None, ""):
     normalized["previous_name"] = None
@@ -187,14 +197,16 @@ def _validate_schedule_payload(data: Any) -> tuple[SchedulePayload | None, dict[
   else:
     preset = _coerce_int(preset, "preset", errors, minimum=1, maximum=6)
 
-  if source is not None and preset is not None:
-    errors["source"] = "'source' and 'preset' are mutually exclusive."
-
-  if source is None and preset is None:
-    preset = DEFAULT_PRESET
-
-  normalized["source"] = source
-  normalized["preset"] = None if source is not None else preset
+  if data.get("station_id") or data.get("favorite_id"):
+    source = None
+    preset = None
+  else:
+    if source is not None and preset is not None:
+      errors["source"] = "'source' and 'preset' are mutually exclusive."
+    if source is None and preset is None:
+      preset = DEFAULT_PRESET
+    normalized["source"] = source
+    normalized["preset"] = None if source is not None else preset
 
   volume = _coerce_int(data.get("volume", DEFAULT_VOLUME), "volume", errors, minimum=0, maximum=100)
   if volume is not None:
@@ -335,8 +347,9 @@ def api_add_schedule(speaker_name: str) -> tuple[Any, int]:
       except ValueError as exc:
         return jsonify({"errors": {"station_id": str(exc)}}), 400
       normalized["speaker_id"] = found["device_id"]
-      normalized["preset"] = None
-      normalized["source"] = None
+      normalized.pop("favorite_id", None)
+      normalized.pop("preset", None)
+      normalized.pop("source", None)
     if normalized.get("favorite_id"):
       try:
         binding = favorites.schedule_binding(normalized["favorite_id"], speaker_name)
@@ -344,6 +357,7 @@ def api_add_schedule(speaker_name: str) -> tuple[Any, int]:
         return jsonify({"errors": {"favorite_id": str(exc)}}), 400
       normalized["speaker_id"] = binding["speaker_id"]
       normalized["preset"] = binding["slot"]
+      normalized.pop("station_id", None)
       normalized["source"] = None
 
     # Editing a legacy client payload must not silently drop an existing identity binding.

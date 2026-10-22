@@ -1,9 +1,10 @@
 # Native presets and scheduled favorites (draft qualification)
 
-Save a speaker-visible NAS folder/playlist or a compatible internet radio station
-on one of the speaker's six physical buttons, then select that saved favorite in a
-routine. This is a local-only feature. It does not register music accounts, mount
-NAS shares, change DNS/firmware, or introduce multiroom playback.
+Save a speaker-visible NAS folder or playlist on one of the speaker's six physical
+buttons, then select that saved favorite in a routine. Radio uses Wisp's separate
+Play and Schedule actions and is never assigned to a new physical preset. This is
+a local-only feature. It does not register music accounts, mount NAS shares,
+change DNS/firmware, or introduce multiroom playback.
 
 ## Before changing a button
 
@@ -36,19 +37,19 @@ rather than silently follow the replacement.
 
 ## Radio readiness and limitations
 
-Wisp serves a small, read-only Orion-compatible metadata document for each radio
-favorite. The speaker fetches that document, then fetches the stream directly.
-Wisp does not proxy, transcode, fetch, redirect or rewrite audio URLs. A stable
-speaker-reachable origin must be explicitly configured as WISP_BASE_URL, e.g.
-http://wisp.lan:9001. It is never inferred from an incoming Host header. Changing
-that origin invalidates saved radio locations; old routines fail closed.
+Wisp-initiated radio uses native selection when the speaker exposes a ready source
+and otherwise uses the guarded per-speaker relay. A stable speaker-reachable
+`WISP_BASE_URL` is required for relay playback. Native and container development
+startup infer `http://<LAN-IP>:9001` only when one private host address is available;
+otherwise set the value explicitly. It is never inferred from an incoming Host
+header. Startup selection is not proof that the speaker can reach the address.
 
-The form is enabled only when the speaker reports a READY LOCAL_INTERNET_RADIO
-source and native /storePreset support. This is a prerequisite, not a guarantee.
-Unmigrated firmware may still require unavailable cloud registration/token state.
-Wisp does not create that state or deploy a companion server. If readiness fails,
-existing presets remain usable and unchanged. Do not reset working buttons to
-try to make the form appear.
+New radio-to-button assignments are not supported. The preset-plan API rejects a
+station ID, radio URL, or non-NAS browse item before creating durable intent or
+sending a speaker write. Existing physical presets and legacy radio favorites are
+not cleared, rewritten, migrated, or automatically recalled. Their read-only
+descriptor route remains available so an existing speaker assignment can refetch
+metadata.
 
 Use a direct HTTP(S) audio stream, not a station website. Credentials, query
 strings/tokens and fragments are refused; these can expose secrets and cannot be
@@ -123,16 +124,11 @@ real-device qualification; accepted requests and descriptor responses are not
 proof of sound. Wisp supplies the canonical URL unchanged; any stream redirects
 are followed by the speaker, not validated or fetched by Wisp.
 
-**Assign to preset** opens the existing explicit six-button preview/confirmation.
-Assignment creates an independent immutable favorite copy of the station URL.
-That favorite can be scheduled as before. The station library itself is not
-limited to six buttons; simultaneous physical assignments still are.
-
 **Remove** removes the station from the visible library only. It never clears a
 speaker button, rewrites schedules or stops audio. Its metadata remains privately
-archived because a currently playing speaker may refetch it. New Play/Assign
-requests for that removed ID are rejected. Existing physical favorite descriptors
-and schedules retain their own copy and continue unchanged. The confirmation
+archived because a currently playing speaker may refetch it. New Play
+requests for that removed ID are rejected. Existing legacy physical favorite
+descriptors and schedules retain their own copy and continue unchanged. The confirmation
 explains this distinction. This is not a secure erase or automatic retention
 policy; archived records count toward the bounded storage limit. A hard purge
 would require a separate explicit decision after checking device references.
@@ -179,7 +175,7 @@ problem and refresh the library to retry initialization.
 The bundled URLs are starting points, not hardware-qualified sources. AAC/MP3,
 HTTPS redirects and CBC/ICI HLS playlists may not work on every SoundTouch
 firmware. A successful HTTP response is not proof of speaker compatibility or
-sound, and seeding does not mark stations ready or fetch their streams. Playback,
-button assignment and scheduling remain separate, explicit actions. Broadcasters
+sound, and seeding does not mark stations ready or fetch their streams. Playback
+and scheduling remain separate, explicit actions. Broadcasters
 may change URLs; manually add a replacement rather than silently rewriting saved
 sources. Editing the bundled seed does not change a previously seeded library.
