@@ -7,3 +7,11 @@
 .station-add h2 { font-size: 18px; margin-bottom: 16px; }
 .station-add label { margin-top: 12px; }
 .stations-body input:focus-visible, .stations-body select:focus-visible { outline: 3px solid var(--primary-dk); outline-offset: 2px; }
+
+.station-actions { display: flex; align-items: center; gap: 4px; }
+.station-overflow { position: relative; margin-left: auto; }
+.station-menu-toggle { min-width: 44px; margin-right: 0; font-size: 24px; line-height: 1; }
+.station-menu { position: absolute; right: 0; top: 100%; z-index: 2; width: 260px; max-width: calc(100vw - 64px); padding: 6px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); box-shadow: 0 8px 24px #0002; }
+.station-menu[hidden] { display: none; }
+.station-menu .preset-action { display: block; width: 100%; margin: 0; text-align: left; white-space: normal; }
+.station-menu .preset-action + .preset-action { margin-top: 4px; }

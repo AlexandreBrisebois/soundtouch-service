@@ -11,7 +11,7 @@
     const doc = deps.document;
     const el = id => doc.getElementById(id);
     let generation = 0, controller = null, active = false, origin = 'hub';
-    let stations = [], confirmation = null, writing = false;
+    let stations = [], confirmation = null, writing = false, openMenu = null;
     let scheduleGeneration = 0, scheduleController = null;
     const message = value => { el('stations-message').textContent = value; };
     function node(tag, value, className) {
@@ -31,7 +31,10 @@
       if (!response.ok) throw new Error(body.error || body.message || 'The request could not be completed.');
       return body;
     }
-    function clearConfirmation() { confirmation = null; el('stations-confirmation').hidden = true; }
+    function clearConfirmation(restoreFocus = false) {
+      const previous = confirmation; confirmation = null; el('stations-confirmation').hidden = true;
+      if (restoreFocus && previous && previous.trigger && previous.trigger.isConnected) previous.trigger.focus();
+    }
     function setBusy() {
       el('stations-add').disabled = writing;
       el('stations-refresh').disabled = writing;
@@ -40,31 +43,98 @@
       el('stations-add-form').setAttribute('aria-busy', String(writing));
       render();
     }
+    function closeMenu(restoreFocus = false) {
+      if (!openMenu) return;
+      const previous = openMenu; openMenu = null;
+      previous.menu.hidden = true;
+      previous.toggle.setAttribute('aria-expanded', 'false');
+      if (restoreFocus) previous.toggle.focus();
+    }
     function render() {
+      // Refreshes and writes must not leave a detached menu or its focus behind.
+      if (openMenu && openMenu.wrapper.contains(doc.activeElement)) el('stations-title').focus();
+      closeMenu();
       const list = el('stations-list'); list.replaceChildren();
       if (!stations.length) list.append(node('p', 'No saved stations yet. Add a direct stream below.', 'preset-help'));
-      stations.forEach(station => {
+      stations.forEach((station, index) => {
         const card = node('article', '', 'station-card');
         card.append(node('h3', station.name), node('p', station.url, 'preset-help'));
         const speaker = el('stations-speaker').value;
-        card.append(button('Play…', () => prompt('play', station), writing || !speaker));
-        card.append(button('Set to a preset…', () => {
-          if (writing || !el('stations-speaker').value) return;
-          deps.assign({...station}, el('stations-speaker').value);
-        }, writing || !speaker));
-        card.append(button('Schedule…', () => {
-          if (writing || !el('stations-speaker').value) return;
+        const actions = node('div', '', 'station-actions');
+        actions.append(button('Schedule…', () => {
+          if (!active || writing || !el('stations-speaker').value) return;
+          closeMenu();
           deps.schedule({...station}, el('stations-speaker').value);
         }, writing || !speaker));
-        card.append(button('Remove…', () => prompt('remove', station), writing));
-        list.append(card);
+        const wrapper = node('div', '', 'station-overflow');
+        const menu = node('div', '', 'station-menu');
+        menu.id = `station-menu-${index}`; menu.hidden = true;
+        menu.setAttribute('role', 'menu');
+        const toggle = button('⋯', () => {
+          if (!active || writing) return;
+          if (openMenu && openMenu.toggle === toggle) { closeMenu(true); return; }
+          showMenu();
+        }, writing);
+        toggle.className += ' station-menu-toggle';
+        toggle.id = `station-menu-toggle-${index}`;
+        toggle.setAttribute('aria-label', `More actions for ${station.name}`);
+        toggle.setAttribute('aria-haspopup', 'menu');
+        toggle.setAttribute('aria-expanded', 'false');
+        toggle.setAttribute('aria-controls', menu.id);
+        menu.setAttribute('aria-labelledby', toggle.id);
+        function menuItem(label, action, disabled) {
+          const item = button(label, () => {
+            if (!active || writing || item.disabled || !openMenu || openMenu.toggle !== toggle) return;
+            closeMenu(true); action();
+          }, disabled);
+          item.setAttribute('role', 'menuitem'); item.tabIndex = -1;
+          menu.append(item); return item;
+        }
+        const items = [
+          menuItem('Test playback…', () => prompt('play', station), writing || !speaker),
+          menuItem('Assign to speaker button…', () => {
+            if (!el('stations-speaker').value) return;
+            deps.assign({...station}, el('stations-speaker').value);
+          }, writing || !speaker),
+          menuItem('Remove…', () => prompt('remove', station), writing),
+        ];
+        function showMenu(last = false) {
+          closeMenu(); clearConfirmation();
+          openMenu = {wrapper, menu, toggle}; menu.hidden = false;
+          toggle.setAttribute('aria-expanded', 'true');
+          const enabled = items.filter(item => !item.disabled);
+          (last ? enabled[enabled.length - 1] : enabled[0]).focus();
+        }
+        toggle.addEventListener('keydown', event => {
+          if (!active || writing || !['ArrowDown', 'ArrowUp'].includes(event.key)) return;
+          event.preventDefault(); showMenu(event.key === 'ArrowUp');
+        });
+        menu.addEventListener('keydown', event => {
+          if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeMenu(true); return; }
+          // Return to the trigger before native Tab navigation leaves the menu.
+          if (event.key === 'Tab') { closeMenu(true); return; }
+          if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+          event.preventDefault();
+          const enabled = items.filter(item => !item.disabled);
+          const current = enabled.indexOf(doc.activeElement);
+          const next = event.key === 'Home' ? 0 : event.key === 'End' ? enabled.length - 1
+            : (current + (event.key === 'ArrowDown' ? 1 : -1) + enabled.length) % enabled.length;
+          enabled[next].focus();
+        });
+        wrapper.append(toggle, menu); actions.append(wrapper); card.append(actions); list.append(card);
       });
     }
+    doc.addEventListener('pointerdown', event => {
+      if (openMenu && !openMenu.wrapper.contains(event.target)) closeMenu(true);
+    });
+    doc.addEventListener('focusin', event => {
+      if (openMenu && !openMenu.wrapper.contains(event.target)) closeMenu();
+    });
     function prompt(kind, station) {
       if (writing || !active) return;
       const speaker = el('stations-speaker').value;
       if (kind === 'play' && !speaker) return;
-      confirmation = {kind, station: {...station}, speaker};
+      confirmation = {kind, station: {...station}, speaker, trigger: doc.activeElement};
       el('stations-confirm-text').textContent = kind === 'play'
         ? `Play “${station.name}” on ${speaker} at volume 5? This can replace current audio. A listening check is still needed; acceptance does not confirm sound.`
         : `Remove “${station.name}” from your station library? Existing presets, schedules and audio already playing stay intact. Station metadata is retained privately for existing playback and presets. You can add the stream again later.`;
@@ -76,7 +146,8 @@
       if (!active || writing) return;
       if (controller) controller.abort();
       controller = new AbortController(); const ticket = ++generation;
-      clearConfirmation(); message('Loading stations…');
+      if (openMenu && openMenu.wrapper.contains(doc.activeElement)) el('stations-title').focus();
+      closeMenu(); clearConfirmation(); message('Loading stations…');
       try {
         const result = await request('/api/stations', {signal: controller.signal});
         if (!active || ticket !== generation) return;
@@ -97,7 +168,7 @@
       else return refresh();
     }
     function close() {
-      active = false; generation += 1; if (controller) controller.abort(); clearConfirmation();
+      closeMenu(); active = false; generation += 1; if (controller) controller.abort(); clearConfirmation();
     }
     async function add(event) {
       if (event) event.preventDefault();
@@ -182,7 +253,7 @@
     el('stations-speaker').addEventListener('change', () => { clearConfirmation(); render(); });
     el('stations-add-form').addEventListener('submit', add);
     el('stations-confirm').addEventListener('click', confirm);
-    el('stations-cancel').addEventListener('click', clearConfirmation);
+    el('stations-cancel').addEventListener('click', () => clearConfirmation(true));
     el('f-station').addEventListener('change', () => {
       if (el('f-station').value) deps.clearFavorite();
       if (deps.onStationSelected) deps.onStationSelected(!!el('f-station').value);

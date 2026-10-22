@@ -16,16 +16,18 @@ const assert=require('node:assert/strict');
 const api=require('./app/static/stations.js');
 let focused=null;
 class Element {
-  constructor(tag='div') { this.tagName=tag;this.children=[];this.listeners={};this.value='';this.textContent='';this.disabled=false;this.hidden=false;this.attrs={}; }
+  constructor(tag='div') { this.tagName=tag;this.children=[];this.listeners={};this.value='';this.textContent='';this.disabled=false;this.hidden=false;this.attrs={};this.isConnected=true; }
   append(...children) { this.children.push(...children); }
   replaceChildren(...children) { this.children=children; }
   addEventListener(name,fn) { this.listeners[name]=fn; }
   setAttribute(name,value) { this.attrs[name]=value; }
+  contains(item) { return this===item || this.children.some(child=>child.contains(item)); }
   focus() { focused=this; }
 }
 const elements=new Map();
 function el(id) { if(!elements.has(id))elements.set(id,new Element());return elements.get(id); }
-const doc={getElementById:el,createElement:tag=>new Element(tag)};
+const docListeners={};
+const doc={getElementById:el,createElement:tag=>new Element(tag),get activeElement(){return focused;},addEventListener:(name,fn)=>{docListeners[name]=fn;}};
 const ok=body=>({ok:true,json:async()=>body});
 let response=async()=>ok({stations:[]});
 let current='Living Room';
@@ -37,7 +39,10 @@ navigate:name=>{view=name;ui.onViewChange(name);},back:name=>{view=name;ui.onVie
 schedule:(station,speaker)=>schedules.push({station,speaker}),clearFavorite:()=>favoriteCleared++,
 assign:(station,speaker)=>assignments.push({station,speaker}),onPlay:(result,speaker)=>plays.push({result,speaker})});
 const station={id:'jazz',name:'Jazz <img>',url:'https://radio.example/jazz'};
-const action=label=>el('stations-list').children[0].children.find(child=>child.textContent===label);
+const descendants=item=>[item,...item.children.flatMap(descendants)];
+const action=(label,index=0)=>descendants(el('stations-list').children[index]).find(child=>child.textContent===label);
+const clickAction=label=>{if(label!=='Schedule…')action('⋯').listeners.click();action(label).listeners.click();};
+const key=(element,key)=>element.listeners.keydown({key,preventDefault(){},stopPropagation(){}});
 '''
     script = harness + '\n(async()=>{\n' + body + '\n})().catch(e=>{console.error(e);process.exitCode=1;});'
     result = subprocess.run([NODE, '-'], input=script, cwd=ROOT, text=True, capture_output=True, timeout=15)
@@ -84,12 +89,12 @@ assert.match(el('stations-message').textContent,/No playback or preset/);
 def test_play_requires_confirmation_and_is_bound_to_speaker():
     checks('''
 response=async()=>ok({stations:[station]});await ui.open('speaker');
-action('Play…').listeners.click();
+clickAction('Test playback…');
 assert.equal(calls.length,1);assert.match(el('stations-confirm-text').textContent,/volume 5/);
 assert.match(el('stations-confirm-text').textContent,/replace current audio/);
 el('stations-speaker').value='Kitchen';el('stations-speaker').listeners.change();
 await ui.confirm();assert.equal(calls.length,1);
-action('Play…').listeners.click();
+clickAction('Test playback…');
 response=async()=>ok({state:'accepted',operation:{state:'accepted'}});
 await ui.confirm();await ui.confirm();
 assert.equal(calls.length,2);assert.equal(calls[1].url,'/api/Kitchen/stations/jazz/play');
@@ -101,7 +106,7 @@ assert.match(el('stations-message').textContent,/not proof/);assert.equal(plays.
 def test_assign_only_opens_existing_preview_flow():
     checks('''
 response=async()=>ok({stations:[station]});await ui.open();
-action('Set to a preset…').listeners.click();
+clickAction('Assign to speaker button…');
 assert.deepEqual(assignments,[{station,speaker:'Living Room'}]);
 assert.equal(calls.length,1);
 ''')
@@ -110,9 +115,9 @@ assert.equal(calls.length,1);
 def test_no_speaker_does_not_prevent_library_management():
     checks('''
 current=null;response=async()=>ok({stations:[station]});await ui.open();
-assert.equal(el('stations-speaker').value,'');assert.equal(action('Play…').disabled,true);
-assert.equal(action('Set to a preset…').disabled,true);assert.equal(action('Remove…').disabled,false);
-action('Remove…').listeners.click();
+assert.equal(el('stations-speaker').value,'');assert.equal(action('Test playback…').disabled,true);
+assert.equal(action('Assign to speaker button…').disabled,true);assert.equal(action('Remove…').disabled,false);
+clickAction('Remove…');
 assert.match(el('stations-confirm-text').textContent,/stay intact/);
 assert.match(el('stations-confirm-text').textContent,/retained privately/);
 response=async()=>ok({removed:true});await ui.confirm();
@@ -134,7 +139,7 @@ assert.equal(calls[0].opts.signal.aborted,true);
 
 def test_duplicate_write_suppressed_and_navigation_never_aborts_write():
     checks('''
-response=async()=>ok({stations:[station]});await ui.open();action('Play…').listeners.click();
+response=async()=>ok({stations:[station]});await ui.open();clickAction('Test playback…');
 let finish;response=()=>new Promise(resolve=>finish=resolve);
 const write=ui.confirm();await ui.confirm();ui.close();
 assert.equal(calls.length,2);assert.equal(calls[1].opts.signal,undefined);
@@ -147,7 +152,7 @@ assert.match(el('stations-message').textContent,/earlier request finished/);
 
 def test_network_failure_does_not_retry_or_claim_playback():
     checks('''
-response=async()=>ok({stations:[station]});await ui.open();action('Play…').listeners.click();
+response=async()=>ok({stations:[station]});await ui.open();clickAction('Test playback…');
 response=async()=>{throw new Error('Disconnected');};await ui.confirm();await ui.confirm();
 assert.equal(calls.length,2);assert.equal(plays.length,0);
 assert.match(el('stations-message').textContent,/may have started/);
@@ -164,7 +169,7 @@ assert.equal(api.validStream('https://radio.example/live.mp3'),true);
 def test_station_can_open_schedule_without_preset_assignment():
     checks('''
 response=async()=>ok({stations:[station]});await ui.open();
-action('Schedule…').listeners.click();
+clickAction('Schedule…');
 assert.deepEqual(schedules,[{station,speaker:'Living Room'}]);
 assert.equal(assignments.length,0);assert.equal(calls.length,1);
 ''')
@@ -217,4 +222,41 @@ await ui.open();
 assert.match(el('stations-message').textContent,/Seed not applied/);
 assert.equal(el('stations-list').children.length,1);
 assert.equal(action('Remove…').disabled,false);
+""")
+
+
+def test_menu_keyboard_dismissal_and_one_open_at_a_time():
+    checks("""
+response=async()=>ok({stations:[station,{...station,id:'second',name:'Second'}]});await ui.open();
+const toggle=action('⋯'),menu=action('Remove…').attrs.role;
+assert.equal(toggle.attrs['aria-haspopup'],'menu');assert.match(toggle.attrs['aria-label'],/Jazz <img>/);
+assert.equal(menu,'menuitem');assert.equal(toggle.attrs['aria-expanded'],'false');
+key(toggle,'ArrowDown');assert.equal(focused,action('Test playback…'));
+const panel=action('Test playback…').attrs.role && action('⋯').attrs['aria-controls'];assert.equal(panel,'station-menu-0');
+const menuNode=descendants(el('stations-list').children[0]).find(x=>x.attrs.role==='menu');
+key(menuNode,'ArrowDown');assert.equal(focused,action('Assign to speaker button…'));
+key(menuNode,'End');assert.equal(focused,action('Remove…'));
+key(menuNode,'ArrowDown');assert.equal(focused,action('Test playback…'));
+key(menuNode,'Escape');assert.equal(focused,toggle);assert.equal(menuNode.hidden,true);
+key(toggle,'ArrowUp');assert.equal(focused,action('Remove…'));
+key(menuNode,'Tab');assert.equal(focused,toggle);assert.equal(menuNode.hidden,true);
+toggle.listeners.click();action('⋯',1).listeners.click();assert.equal(menuNode.hidden,true);
+assert.equal(action('⋯',1).attrs['aria-expanded'],'true');
+docListeners.pointerdown({target:el('stations-title')});assert.equal(action('⋯',1).attrs['aria-expanded'],'false');
+toggle.listeners.click();docListeners.focusin({target:el('station-name')});assert.equal(menuNode.hidden,true);
+toggle.listeners.click();ui.close();assert.equal(menuNode.hidden,true);assert.equal(calls.length,1);
+""")
+
+
+def test_disabled_menu_items_are_skipped_and_refresh_closes_menu():
+    checks("""
+current=null;response=async()=>ok({stations:[station]});await ui.open();
+key(action('⋯'),'ArrowDown');assert.equal(focused,action('Remove…'));
+await ui.refresh();assert.equal(action('⋯').attrs['aria-expanded'],'false');
+assert.equal(el('stations-confirmation').hidden,true);
+action('⋯').listeners.click();el('stations-speaker').value='Kitchen';el('stations-speaker').listeners.change();
+assert.equal(action('⋯').attrs['aria-expanded'],'false');
+clickAction('Test playback…');assert.match(el('stations-confirm-text').textContent,/Kitchen/);
+assert.equal(action('⋯').attrs['aria-expanded'],'false');assert.equal(focused,el('stations-confirm'));
+el('stations-cancel').listeners.click();assert.equal(focused,action('⋯'));assert.equal(el('stations-confirmation').hidden,true);
 """)
