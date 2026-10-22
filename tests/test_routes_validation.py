@@ -486,12 +486,14 @@ def test_explicit_numbered_preset_removes_favorite_binding(monkeypatch):
 @pytest.mark.parametrize('legacy', [False, True])
 def test_station_schedule_keeps_archived_binding_and_device_pin(monkeypatch, legacy):
     from app.core import favorites
+    monkeypatch.setenv('WISP_BASE_URL', 'http://192.0.2.10:9001')
+    monkeypatch.setattr(favorites, 'capabilities', lambda _: set())
     id = 'b' * 32
     queued, reads, devices = [], [], []
     monkeypatch.setattr('app.api.routes.jobs.config_queue.put', queued.append)
     monkeypatch.setattr('app.api.routes.jobs.get_current_config', lambda: {'Room': [{'name': 'Morning', 'station_id': id, 'speaker_id': 'ABC'}]})
-    monkeypatch.setattr(favorites, 'station', lambda key, **kw: reads.append((key, kw)) or {'id': id})
-    monkeypatch.setattr(favorites, 'device', lambda name, pin: devices.append((name, pin)) or {'device_id': pin})
+    monkeypatch.setattr(favorites, 'station', lambda key, **kw: reads.append((key, kw)) or {'id': id, 'url': 'https://radio.example/live.mp3'})
+    monkeypatch.setattr(favorites, 'device', lambda name, pin: devices.append((name, pin)) or {'device_id': pin, 'ip': '192.0.2.1'})
     payload = {'name': 'Morning', 'days': ['monday'], 'on_time': '07:00', 'off_time': '08:00', 'volume': 10, 'preset': None, 'source': None}
     if not legacy:
         payload['station_id'] = id
@@ -521,12 +523,14 @@ def test_station_schedule_rejects_same_name_replacement_speaker(monkeypatch):
 
 def test_new_station_schedule_needs_no_preset_and_rejects_dual_binding(monkeypatch):
     from app.core import favorites
+    monkeypatch.setenv('WISP_BASE_URL', 'http://192.0.2.10:9001')
+    monkeypatch.setattr(favorites, 'capabilities', lambda _: set())
     id = 'b' * 32
     queued, reads = [], []
     monkeypatch.setattr('app.api.routes.jobs.config_queue.put', queued.append)
     monkeypatch.setattr('app.api.routes.jobs.get_current_config', lambda: {})
-    monkeypatch.setattr(favorites, 'station', lambda key, **kw: reads.append((key, kw)) or {'id': id})
-    monkeypatch.setattr(favorites, 'device', lambda name, pin: {'device_id': 'ABC'})
+    monkeypatch.setattr(favorites, 'station', lambda key, **kw: reads.append((key, kw)) or {'id': id, 'url': 'https://radio.example/live.mp3'})
+    monkeypatch.setattr(favorites, 'device', lambda name, pin: {'device_id': 'ABC', 'ip': '192.0.2.1'})
     payload = {'name': 'Morning', 'days': ['monday'], 'on_time': '07:00', 'off_time': '08:00', 'volume': 10, 'station_id': id, 'preset': None, 'source': None}
     response = create_test_app().test_client().post('/api/Room/schedules', json=payload)
     assert response.status_code == 202
@@ -586,3 +590,21 @@ def test_schedule_validation_accumulates_all_numeric_errors(monkeypatch):
         'volume', 'fade_in_duration', 'fade_out_duration', 'paused',
     }
     assert not queued
+
+
+@pytest.mark.parametrize('paused', [False, True])
+def test_station_schedule_requires_readiness_unless_saved_paused(monkeypatch, paused):
+    from app.core import favorites
+    queued = []
+    monkeypatch.delenv('WISP_BASE_URL', raising=False)
+    monkeypatch.setattr('app.api.routes.jobs.config_queue.put', queued.append)
+    monkeypatch.setattr('app.api.routes.jobs.get_current_config', lambda: {})
+    monkeypatch.setattr(favorites, 'station', lambda *a, **kw: {'url': 'https://radio.example/live.mp3'})
+    monkeypatch.setattr(favorites, 'device', lambda *a: {'device_id': 'ABC', 'ip': '192.0.2.1'})
+    response = create_test_app().test_client().post('/api/Room/schedules', json={
+        'name': 'Morning', 'days': ['monday'], 'on_time': '07:00', 'off_time': '08:00',
+        'volume': 5, 'station_id': 'b' * 32, 'paused': paused})
+    assert response.status_code == (202 if paused else 400)
+    assert bool(queued) is paused
+    if not paused:
+        assert 'WISP_BASE_URL' in response.json['errors']['station_id']

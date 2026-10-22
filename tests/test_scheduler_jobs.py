@@ -5,7 +5,7 @@ import logging
 
 def test_auto_on_job_sanitizes_arguments_and_uses_operation(monkeypatch):
     calls = []
-    monkeypatch.setattr(jobs.playback, 'begin', lambda name: {'speaker': name})
+    monkeypatch.setattr(jobs.playback, 'begin', lambda name, **kwargs: {'speaker': name})
     monkeypatch.setattr(jobs.playback, 'run_on', lambda *args: calls.append(args))
     jobs.auto_on_job('Room', 99, 250, fade_in_duration=-1, force=True)
     assert calls == [({'speaker': 'Room'}, 6, 100, None, 0.0, True)]
@@ -13,7 +13,7 @@ def test_auto_on_job_sanitizes_arguments_and_uses_operation(monkeypatch):
 
 def test_auto_off_job_uses_cancelable_operation(monkeypatch):
     calls = []
-    monkeypatch.setattr(jobs.playback, 'begin', lambda name: {'speaker': name})
+    monkeypatch.setattr(jobs.playback, 'begin', lambda name, **kwargs: {'speaker': name})
     monkeypatch.setattr(jobs.playback, 'run_off', lambda *args: calls.append(args))
     jobs.auto_off_job('Room', fade_out_duration=30)
     assert calls == [({'speaker': 'Room'}, 30)]

@@ -21,6 +21,13 @@ disable_error_code = ["import-untyped"]
 follow_imports = "skip"
 files = [
   "app/core/http_client.py",
+  "app/core/direct_radio.py",
+  "app/core/radio_stream.py",
+  "app/core/radio_relay.py",
+  "app/core/radio_hls.py",
+  "app/core/playback.py",
+  "app/core/radio_upstream.py",
+  "app/core/relay_playback.py",
   "app/core/control.py",
   "app/core/library.py",
   "app/core/favorites.py",

@@ -327,7 +327,7 @@ def test_station_add_and_remove_require_json_and_confirmation(rig):
 def test_station_direct_play_pins_device_without_preset_mutation(rig, monkeypatch):
     from app.api import favorites as api
     monkeypatch.setenv('WISP_BASE_URL', 'http://wisp.local:9001')
-    item = favorites.add_station('Radio', 'https://radio.example/live')
+    item = favorites.add_station('Radio', 'https://radio.example/live.mp3')
     calls = []
     monkeypatch.setattr(api.jobs, 'queue_station', lambda *args: calls.append(args) or {'state': 'accepted'})
     app = Flask(__name__)
@@ -460,3 +460,23 @@ def test_seed_failure_does_not_block_existing_playback_or_removal(rig, monkeypat
     assert favorites.station_descriptor(saved['id'])['audio']['streamUrl'] == saved['url']
     favorites.remove_station(saved['id'])
     assert favorites.stations() == []
+
+
+def test_radio_readiness_distinguishes_native_and_direct_diagnostic(rig):
+    radio = favorites.overview('Bedroom')['radio']
+    assert radio['available'] is False
+    assert radio['native_preset']['blockers'] == ['wisp_base_url_missing', 'local_internet_radio_not_ready']
+    assert radio['station_playback']['available'] is False
+    assert radio['direct_test']['experimental'] is True
+    assert radio['direct_test']['automatic_schedules'] is False
+    assert radio['direct_test']['physical_presets'] is False
+    assert not rig[1]
+
+
+def test_native_readiness_does_not_require_direct_diagnostic(rig, monkeypatch):
+    monkeypatch.setenv('WISP_BASE_URL', 'http://wisp.local:9001')
+    monkeypatch.setattr(library, 'read_sources', lambda _: [{'source': 'LOCAL_INTERNET_RADIO', 'ready': True}])
+    radio = favorites.overview('Bedroom')['radio']
+    assert radio['available'] is True
+    assert radio['native_preset']['blockers'] == []
+    assert radio['station_playback']['available'] is False  # /select not advertised

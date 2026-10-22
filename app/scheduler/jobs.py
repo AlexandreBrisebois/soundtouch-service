@@ -374,7 +374,7 @@ def auto_on_job(speaker_name: str, preset: int | None, volume: int,
 
 def auto_off_job(speaker_name: str,
                  fade_out_duration: float = DEFAULT_FADE_OUT_DURATION_SECONDS) -> None:
-    op = playback.begin(speaker_name)
+    op = playback.begin(speaker_name, preserve_radio=True)
     playback.run_off(op, fade_out_duration)
 
 
@@ -393,11 +393,14 @@ def queue_on(speaker_name: str, schedule: Schedule, force: bool = False) -> dict
 
 def _queue_on_locked(speaker_name: str, schedule: Schedule, force: bool) -> dict[str, Any] | None:
     previous = playback.last(speaker_name)
+    if not force and playback.has_radio(speaker_name, schedule.get('speaker_id')):
+        return previous
     if previous and not previous['terminal'] and previous['schedule_name'] == schedule['name']:
         return previous
     if BACKGROUND_WORKER_POOL is None:
         return None
-    op = playback.begin(speaker_name, schedule['name'], schedule.get('speaker_id'))
+    op = playback.begin(speaker_name, schedule['name'], schedule.get('speaker_id'),
+                        allow_radio_idle=bool(schedule.get('station_id') and not force))
     extra = [None, schedule['station_id'], True] if schedule.get('station_id') else ([schedule['favorite_id']] if schedule.get('favorite_id') else [])
     if not submit_background_task(_execute_operation, playback.run_on, op, schedule.get('preset'),
                                   schedule['volume'], schedule.get('source'),
@@ -410,7 +413,14 @@ def _queue_on_locked(speaker_name: str, schedule: Schedule, force: bool) -> dict
 def queue_off(speaker_name: str, schedule: Schedule) -> dict[str, Any] | None:
     if BACKGROUND_WORKER_POOL is None:
         return None
-    op = playback.begin(speaker_name, schedule['name'], schedule.get('speaker_id'))
+    if schedule.get('station_id'):
+        op = playback.begin_radio_off(speaker_name, schedule['name'], schedule.get('speaker_id'), schedule['station_id'])
+        if op is None:
+            return {'state': 'skipped', 'reason': 'radio_schedule_no_longer_owner', 'terminal': True}
+    else:
+        op = playback.begin_nonradio_schedule_off(speaker_name, schedule['name'], schedule.get('speaker_id'))
+        if op is None:
+            return {'state': 'skipped', 'reason': 'radio_schedule_no_longer_owner', 'terminal': True}
     if not submit_background_task(_execute_operation, playback.run_off, op, schedule['fade_out_duration']):
         playback.finish(op, 'failed', 'worker_unavailable')
         return None
@@ -612,6 +622,24 @@ def queue_station(speaker_name: str, speaker_id: str, station_id: str) -> dict[s
             return None
         op = playback.begin(speaker_name, name, speaker_id)
         if not submit_background_task(_execute_operation, playback.run_on, op, None, 5, None, 2, True, None, station_id):
+            playback.finish(op, 'failed', 'worker_unavailable')
+            return None
+        return dict(op['outcome'])
+
+
+def queue_direct_radio_test(speaker_name: str, speaker_id: str,
+                            station_id: str, saved_url: str) -> dict[str, Any] | None:
+    """Explicit diagnostics only. No automatic routine calls this path."""
+    from app.core import direct_radio
+    with _queue_lock:
+        name = 'Direct radio test ' + station_id
+        previous = playback.last(speaker_name)
+        if previous and not previous['terminal'] and previous['schedule_name'] == name:
+            return previous
+        if BACKGROUND_WORKER_POOL is None:
+            return None
+        op = playback.begin(speaker_name, name, speaker_id)
+        if not submit_background_task(_execute_operation, direct_radio.run, op, saved_url):
             playback.finish(op, 'failed', 'worker_unavailable')
             return None
         return dict(op['outcome'])

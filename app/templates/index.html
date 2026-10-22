@@ -76,10 +76,14 @@
     </div>
 
     <div class="scroll-body" id="hub-body">
-      <button class="preset-action" id="btn-hub-stations" type="button">Stations</button>
       <div class="section-label" id="hub-section-label">Speakers</div>
       <div class="spinner" id="hub-spinner"></div>
       <div id="speaker-list"></div>
+      <details class="support-settings" id="hub-settings">
+        <summary>Settings</summary>
+        <p class="preset-help">Manage the music available for your schedules.</p>
+        <button class="preset-action" id="btn-hub-stations" type="button">Radio library</button>
+      </details>
     </div>
 
     <div class="thumb-bar">
@@ -106,6 +110,7 @@
         <div class="detail-speaker-name" id="detail-speaker-name"></div>
         <div class="detail-speaker-status" id="detail-speaker-status"></div>
         <p class="schedule-meta" id="detail-operation" role="status" aria-live="polite" aria-atomic="true">No recent automation run.</p>
+        <p class="schedule-meta" id="detail-physical-stop" role="alert" hidden>Radio may still be playing. Use the speaker’s physical Stop button and check its volume. Closing Wisp does not stop direct radio.</p>
         <button class="btn-pause" id="btn-cancel-operation" hidden aria-describedby="cancel-operation-help">Cancel automation</button>
         <p class="schedule-meta" id="cancel-operation-help" hidden>Cancels pending playback and fades. Audio already playing may continue.</p>
       </div>
@@ -117,8 +122,11 @@
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         Add Schedule
       </button>
-      <button class="preset-action" id="btn-speaker-stations" type="button">Stations</button>
-      <button class="preset-action" id="btn-manage-presets" type="button" aria-expanded="false" aria-controls="presets-panel">Manage speaker presets</button>
+      <details class="support-settings" id="speaker-settings">
+        <summary>Settings</summary>
+        <p class="preset-help">Supporting setup for this speaker. Your schedules stay above.</p>
+      <button class="preset-action" id="btn-speaker-stations" type="button">Radio library</button>
+      <button class="preset-action" id="btn-manage-presets" type="button" aria-expanded="false" aria-controls="presets-panel">Music libraries &amp; speaker buttons</button>
       <section class="preset-panel" id="presets-panel" hidden aria-labelledby="presets-title">
         <div class="preset-panel-header">
           <h2 id="presets-title" tabindex="-1">Speaker presets</h2>
@@ -127,7 +135,7 @@
         <p id="presets-message" role="status" aria-live="polite" aria-atomic="true"></p>
         <button class="preset-action" id="presets-refresh" type="button">Refresh</button>
         <h3>Your favorites</h3><div id="preset-favorites"></div>
-        <h3>Music on your NAS</h3><div id="preset-sources"></div>
+        <h3>Music connected to this speaker</h3><p class="preset-help">These music libraries are already registered on this speaker. This is not a scan of every NAS on your network.</p><div id="preset-sources"></div>
         <div id="preset-browser" hidden>
           <h3 id="preset-browser-title"></h3>
           <button class="preset-action" id="preset-up" type="button">Up one level</button>
@@ -157,6 +165,7 @@
           <button class="preset-action" id="preset-radio-choose" type="button">Choose station</button>
         </div>
       </section>
+      </details>
     </div>
 
     <div class="thumb-bar">
@@ -227,28 +236,40 @@
       </div>
 
       <div class="form-group">
-        <label class="form-label" for="f-station">Saved station <span class="form-label-optional">(optional)</span></label>
-        <select class="form-input" id="f-station" aria-describedby="station-schedule-help"><option value="">Use a favorite, numbered preset or AUX</option></select>
+        <label class="form-label" for="f-play-kind">What to play</label>
+        <select class="form-input" id="f-play-kind" aria-controls="schedule-radio schedule-favorite schedule-preset schedule-aux">
+          <option value="">Choose music…</option>
+          <option value="radio">Radio station</option>
+          <option value="favorite">Saved favorite</option>
+          <option value="preset">Speaker button</option>
+          <option value="aux">AUX input</option>
+        </select>
+      </div>
+      <div class="form-group" id="schedule-radio" hidden>
+        <label class="form-label" for="f-station">Radio station</label>
+        <select class="form-input" id="f-station" aria-describedby="station-schedule-help"><option value="">Choose a station…</option></select>
         <p class="preset-help" id="station-schedule-help">A station can play on this schedule without occupying a speaker button. Wisp must stay available.</p>
       </div>
-      <div class="form-group">
-        <label class="form-label" for="f-favorite">Saved favorite <span class="form-label-optional">(optional)</span></label>
-        <select class="form-input" id="f-favorite"><option value="">Use a numbered preset or AUX</option></select>
+      <div class="form-group" id="schedule-favorite" hidden>
+        <label class="form-label" for="f-favorite">Saved favorite</label>
+        <select class="form-input" id="f-favorite" aria-describedby="favorite-schedule-help"><option value="">Choose a favorite…</option></select>
         <p class="preset-help" id="favorite-schedule-help">A saved favorite checks its button assignment before a scheduled start.</p>
       </div>
       <!-- Preset -->
-      <div class="form-group">
-        <label class="form-label">Preset <span class="form-label-optional">(optional)</span></label>
+      <div class="form-group" id="schedule-preset" hidden>
+        <label class="form-label">Speaker button</label>
         <div class="preset-pills" id="preset-pills">
-          <button class="preset-pill active" data-preset="1">1</button>
-          <button class="preset-pill" data-preset="2">2</button>
-          <button class="preset-pill" data-preset="3">3</button>
-          <button class="preset-pill" data-preset="4">4</button>
-          <button class="preset-pill" data-preset="5">5</button>
-          <button class="preset-pill" data-preset="6">6</button>
-          <button class="preset-pill preset-pill-aux" data-preset="AUX">AUX</button>
+          <button class="preset-pill active" data-preset="1" aria-pressed="true">1</button>
+          <button class="preset-pill" data-preset="2" aria-pressed="false">2</button>
+          <button class="preset-pill" data-preset="3" aria-pressed="false">3</button>
+          <button class="preset-pill" data-preset="4" aria-pressed="false">4</button>
+          <button class="preset-pill" data-preset="5" aria-pressed="false">5</button>
+          <button class="preset-pill" data-preset="6" aria-pressed="false">6</button>
+
         </div>
       </div>
+
+      <p class="preset-help" id="schedule-aux" hidden>Plays audio from the speaker’s AUX input. Keep the connected device ready.</p>
 
       <!-- Fade In -->
       <div class="form-group">
@@ -299,6 +320,10 @@
       <button class="preset-action" id="stations-refresh" type="button">Refresh stations</button>
       <div id="stations-confirmation" class="preset-confirmation" hidden>
         <p id="stations-confirm-text" class="preset-help"></p>
+        <label id="stations-direct-risk" class="preset-help" hidden>
+          <input type="checkbox" id="stations-accept-risk" aria-describedby="stations-confirm-text">
+          I accept the remembered startup volume risk and have physical Stop within reach.
+        </label>
         <button class="preset-action" id="stations-confirm" type="button"></button>
         <button class="preset-action" id="stations-cancel" type="button">Cancel</button>
       </div>
@@ -389,7 +414,9 @@ async function requestJson(url, options = {}) {
 function setSelectedPreset(value) {
   selectedPreset = value === 'AUX' ? 'AUX' : Number(value);
   document.querySelectorAll('.preset-pill').forEach(p => {
-    p.classList.toggle('active', p.dataset.preset === String(selectedPreset));
+    const active = p.dataset.preset === String(selectedPreset);
+    p.classList.toggle('active', active);
+    p.setAttribute('aria-pressed', String(active));
   });
 }
 
@@ -618,11 +645,13 @@ function operationSummary(operation) {
   const reason = operation.reason ? ` · ${String(operation.reason).replace(/_/g, ' ')}` : '';
   const updated = Number.isFinite(operation.updated_at)
     ? ` · ${new Date(operation.updated_at * 1000).toLocaleString()}` : '';
-  return `Last run: ${schedule}${label}${reason}${updated}`;
+  const safety = operation.physical_stop_may_be_needed === true ? ' · Physical Stop may be needed; closing Wisp does not stop direct radio.' : '';
+  return `Last run: ${schedule}${label}${reason}${updated}${safety}`;
 }
 
 function renderOperation(operation) {
   document.getElementById('detail-operation').textContent = operationSummary(operation);
+  document.getElementById('detail-physical-stop').hidden = operation?.physical_stop_may_be_needed !== true;
   const active = operationIsActive(operation);
   document.getElementById('btn-cancel-operation').hidden = !active;
   document.getElementById('cancel-operation-help').hidden = !active;
@@ -974,10 +1003,11 @@ function openForm(data = null) {
   }
 
   document.getElementById('form-back-label').textContent = currentSpeaker;
-  validateForm();
+  setPlayKind(data?.station_id ? 'radio' : data?.favorite_id ? 'favorite' : data?.source === 'AUX' ? 'aux' : data ? 'preset' : '');
   showView('form');
   if (window.wispPresets) window.wispPresets.loadSchedule(currentSpeaker, data ? data.favorite_id : null);
   if (window.wispStations) window.wispStations.loadSchedule(data ? data.station_id : null);
+  validateForm();
 }
 
 function updateQuickChips(days) {
@@ -1039,8 +1069,7 @@ document.getElementById('f-volume').addEventListener('input', e => {
 document.querySelectorAll('.preset-pill').forEach(pill => {
   pill.addEventListener('click', () => {
     setSelectedPreset(pill.dataset.preset);
-    if (window.wispPresets) window.wispPresets.clearScheduleChoice();
-    if (window.wispStations) window.wispStations.clearScheduleChoice();
+    setPlayKind('preset');
   });
 });
 
@@ -1059,19 +1088,44 @@ document.querySelectorAll('.stepper-btn').forEach(btn => {
   });
 });
 
+/* Only the chosen source participates in a schedule. Hidden draft choices stay local. */
+function setPlayKind(kind) {
+  document.getElementById('f-play-kind').value = kind;
+  for (const name of ['radio', 'favorite', 'preset', 'aux']) {
+    document.getElementById(`schedule-${name}`).hidden = kind !== name;
+  }
+  validateForm();
+}
+function scheduleSource() {
+  const kind = document.getElementById('f-play-kind').value;
+  const station = kind === 'radio' ? document.getElementById('f-station').value : null;
+  const favorite = kind === 'favorite' ? document.getElementById('f-favorite').value : null;
+  return {station_id: station || null, favorite_id: favorite || null,
+    preset: kind === 'preset' ? (selectedPreset === 'AUX' ? null : selectedPreset) : null,
+    source: kind === 'aux' ? 'AUX' : null};
+}
+function hasScheduleSource() {
+  const choice = scheduleSource();
+  return !!(choice.station_id || choice.favorite_id || choice.preset || choice.source);
+}
+document.getElementById('f-play-kind').addEventListener('change', event => setPlayKind(event.target.value));
+document.getElementById('f-station').addEventListener('change', validateForm);
+document.getElementById('f-favorite').addEventListener('change', validateForm);
+
 /* Validation */
 function validateForm() {
   const name   = document.getElementById('f-name').value.trim();
   const onTime  = document.getElementById('f-on').value;
   const offTime = document.getElementById('f-off').value;
   const days    = [...document.querySelectorAll('.day-chip.active')];
-  const ok = name.length > 0 && onTime && offTime && days.length > 0;
+  const ok = name.length > 0 && onTime && offTime && days.length > 0 && hasScheduleSource();
   document.getElementById('btn-save').disabled = !ok;
 }
 
 /* Save */
 document.getElementById('btn-save').addEventListener('click', async () => {
   const btn = document.getElementById('btn-save');
+  if (!hasScheduleSource()) { validateForm(); return; }
   const name    = document.getElementById('f-name').value.trim();
   const onTime  = document.getElementById('f-on').value;
   const offTime = document.getElementById('f-off').value;
@@ -1081,15 +1135,12 @@ document.getElementById('btn-save').addEventListener('click', async () => {
   const payload = {
     name,
     previous_name: editingSchedule ? editingSchedule.name : null,
-    speaker_id: window.wispPresets?.scheduleBinding()?.speaker_id || (editingSchedule ? editingSchedule.speaker_id : undefined),
-    favorite_id: window.wispPresets && !window.wispStations?.scheduleValue() ? window.wispPresets.scheduleValue() : null,
-    station_id: window.wispStations ? window.wispStations.scheduleValue() : undefined,
+    speaker_id: (document.getElementById('f-play-kind').value === 'favorite' ? window.wispPresets?.scheduleBinding()?.speaker_id : null) || (editingSchedule ? editingSchedule.speaker_id : undefined),
+    ...scheduleSource(),
     days,
     on_time:          onTime,
     off_time:         offTime,
     volume,
-    preset:           window.wispStations?.scheduleValue() || selectedPreset === 'AUX' ? null : selectedPreset,
-    source:           !window.wispStations?.scheduleValue() && selectedPreset === 'AUX' ? 'AUX' : null,
     fade_in_duration:  fadeIn  * 60,
     fade_out_duration: fadeOut * 60,
     paused: editingSchedule ? editingSchedule.paused : false,
@@ -1107,7 +1158,9 @@ document.getElementById('btn-save').addEventListener('click', async () => {
       showView('speaker');
       setTimeout(loadSchedules, 600);
     } else {
-      toast('Could not save — check inputs');
+      let problem;
+      try { problem = await res.json(); } catch (_) { problem = {}; }
+      toast(problem.errors?.station_id || problem.error || 'Could not save — check inputs');
     }
   } catch { toast('Network error'); }
   finally {
@@ -1132,11 +1185,13 @@ document.querySelectorAll('.overlay').forEach(ov => {
 if (window.WispPresetUI) {
   window.wispPresets = window.WispPresetUI.create({
     document, fetch: (...args) => fetch(...args), getSpeaker: () => currentSpeaker,
-    setPreset: setSelectedPreset,
+    setPreset: () => {},
     openSchedule: favorite => {
       openForm();
       setSelectedPreset(favorite.slot);
+      setPlayKind('favorite');
       window.wispPresets.loadSchedule(currentSpeaker, favorite.id);
+      validateForm();
     },
     onTest: (result, speaker) => {
       if (speaker === currentSpeaker) {
@@ -1165,25 +1220,19 @@ if (window.WispStationUI) {
     schedule: (station, speaker) => {
       openSpeaker(speaker);
       openForm();
+      setPlayKind('radio');
       window.wispStations.loadSchedule(station.id);
     },
-    onStationSelected: chosen => {
-      if (chosen) document.querySelectorAll('.preset-pill').forEach(pill => pill.classList.remove('active'));
-      else setSelectedPreset(selectedPreset);
-    },
-    clearFavorite: () => { if (window.wispPresets) window.wispPresets.clearScheduleChoice(); },
-    onPlay: (result, speaker) => {
+    onStationSelected: () => validateForm(),
+    clearFavorite: () => {},
+    onPlay: (result, speaker, options = {}) => {
       openSpeaker(speaker);
       latestOperation = result.operation || null;
       renderOperation(latestOperation);
-      toast('Quiet playback requested; listen to confirm sound');
+      toast(options.direct ? 'Experimental test requested; keep physical Stop nearby' : 'Quiet playback requested; listen to confirm sound');
     },
   });
 }
-
-document.getElementById('f-favorite').addEventListener('change', () => {
-  if (document.getElementById('f-favorite').value && window.wispStations) window.wispStations.clearScheduleChoice();
-});
 
 /* ─── Boot ───────────────────────────────────────────────────────── */
 let bootStarted = false;

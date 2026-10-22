@@ -31,17 +31,18 @@ const doc={getElementById:el,createElement:tag=>new Element(tag),get activeEleme
 const ok=body=>({ok:true,json:async()=>body});
 let response=async()=>ok({stations:[]});
 let current='Living Room';
-const calls=[],assignments=[],plays=[],schedules=[];let favoriteCleared=0;
+const calls=[],capabilityReads=[],assignments=[],plays=[],schedules=[];
+let capabilities=async()=>ok({available:true,mode:'native',requires_wisp_running:true});let favoriteCleared=0;
 let view='hub';
 const ui=api.create({document:doc,getSpeakers:()=>[{name:'Living Room'},{name:'Kitchen'}],getSpeaker:()=>current,
-fetch:async(url,opts)=>{calls.push({url,opts});return response(url,opts);},
+fetch:async(url,opts)=>{if(url.endsWith('/readiness') || (url.endsWith('/direct-test') && !opts.method)){capabilityReads.push({url,opts});return capabilities(url,opts);} calls.push({url,opts});return response(url,opts);},
 navigate:name=>{view=name;ui.onViewChange(name);},back:name=>{view=name;ui.onViewChange(name);},
 schedule:(station,speaker)=>schedules.push({station,speaker}),clearFavorite:()=>favoriteCleared++,
-assign:(station,speaker)=>assignments.push({station,speaker}),onPlay:(result,speaker)=>plays.push({result,speaker})});
+assign:(station,speaker)=>assignments.push({station,speaker}),onPlay:(result,speaker,options)=>plays.push({result,speaker,options})});
 const station={id:'jazz',name:'Jazz <img>',url:'https://radio.example/jazz'};
 const descendants=item=>[item,...item.children.flatMap(descendants)];
 const action=(label,index=0)=>descendants(el('stations-list').children[index]).find(child=>child.textContent===label);
-const clickAction=label=>{if(label!=='Schedule…')action('⋯').listeners.click();action(label).listeners.click();};
+const clickAction=label=>{if(label!=='Schedule…')action('⋯').listeners.click();return action(label).listeners.click();};
 const key=(element,key)=>element.listeners.keydown({key,preventDefault(){},stopPropagation(){}});
 '''
     script = harness + '\n(async()=>{\n' + body + '\n})().catch(e=>{console.error(e);process.exitCode=1;});'
@@ -89,12 +90,12 @@ assert.match(el('stations-message').textContent,/No playback or preset/);
 def test_play_requires_confirmation_and_is_bound_to_speaker():
     checks('''
 response=async()=>ok({stations:[station]});await ui.open('speaker');
-clickAction('Test playback…');
+await clickAction('Test playback…');
 assert.equal(calls.length,1);assert.match(el('stations-confirm-text').textContent,/volume 5/);
 assert.match(el('stations-confirm-text').textContent,/replace current audio/);
 el('stations-speaker').value='Kitchen';el('stations-speaker').listeners.change();
 await ui.confirm();assert.equal(calls.length,1);
-clickAction('Test playback…');
+await clickAction('Test playback…');
 response=async()=>ok({state:'accepted',operation:{state:'accepted'}});
 await ui.confirm();await ui.confirm();
 assert.equal(calls.length,2);assert.equal(calls[1].url,'/api/Kitchen/stations/jazz/play');
@@ -106,7 +107,7 @@ assert.match(el('stations-message').textContent,/not proof/);assert.equal(plays.
 def test_assign_only_opens_existing_preview_flow():
     checks('''
 response=async()=>ok({stations:[station]});await ui.open();
-clickAction('Assign to speaker button…');
+await clickAction('Assign to speaker button…');
 assert.deepEqual(assignments,[{station,speaker:'Living Room'}]);
 assert.equal(calls.length,1);
 ''')
@@ -117,7 +118,7 @@ def test_no_speaker_does_not_prevent_library_management():
 current=null;response=async()=>ok({stations:[station]});await ui.open();
 assert.equal(el('stations-speaker').value,'');assert.equal(action('Test playback…').disabled,true);
 assert.equal(action('Assign to speaker button…').disabled,true);assert.equal(action('Remove…').disabled,false);
-clickAction('Remove…');
+await clickAction('Remove…');
 assert.match(el('stations-confirm-text').textContent,/stay intact/);
 assert.match(el('stations-confirm-text').textContent,/retained privately/);
 response=async()=>ok({removed:true});await ui.confirm();
@@ -139,7 +140,7 @@ assert.equal(calls[0].opts.signal.aborted,true);
 
 def test_duplicate_write_suppressed_and_navigation_never_aborts_write():
     checks('''
-response=async()=>ok({stations:[station]});await ui.open();clickAction('Test playback…');
+response=async()=>ok({stations:[station]});await ui.open();await clickAction('Test playback…');
 let finish;response=()=>new Promise(resolve=>finish=resolve);
 const write=ui.confirm();await ui.confirm();ui.close();
 assert.equal(calls.length,2);assert.equal(calls[1].opts.signal,undefined);
@@ -152,7 +153,7 @@ assert.match(el('stations-message').textContent,/earlier request finished/);
 
 def test_network_failure_does_not_retry_or_claim_playback():
     checks('''
-response=async()=>ok({stations:[station]});await ui.open();clickAction('Test playback…');
+response=async()=>ok({stations:[station]});await ui.open();await clickAction('Test playback…');
 response=async()=>{throw new Error('Disconnected');};await ui.confirm();await ui.confirm();
 assert.equal(calls.length,2);assert.equal(plays.length,0);
 assert.match(el('stations-message').textContent,/may have started/);
@@ -169,7 +170,7 @@ assert.equal(api.validStream('https://radio.example/live.mp3'),true);
 def test_station_can_open_schedule_without_preset_assignment():
     checks('''
 response=async()=>ok({stations:[station]});await ui.open();
-clickAction('Schedule…');
+await clickAction('Schedule…');
 assert.deepEqual(schedules,[{station,speaker:'Living Room'}]);
 assert.equal(assignments.length,0);assert.equal(calls.length,1);
 ''')
@@ -202,10 +203,10 @@ el('f-station').listeners.change();assert.equal(favoriteCleared,3);
 def test_template_serializes_station_binding_without_preset_requirement():
     html = (ROOT / 'app/templates/index.html').read_text()
     assert 'id="f-station"' in html
-    assert 'station_id: window.wispStations' in html
+    assert '...scheduleSource(),' in html
     assert 'window.wispStations.loadSchedule(data ? data.station_id : null)' in html
-    assert "favorite_id: window.wispPresets && !window.wispStations?.scheduleValue()" in html
-    assert "preset:           window.wispStations?.scheduleValue() ||" in html
+    assert "favorite_id: favorite || null" in html
+    assert "preset: kind === 'preset'" in html
 
 
 def test_starters_are_seed_data_not_an_import_button():
@@ -256,7 +257,141 @@ await ui.refresh();assert.equal(action('⋯').attrs['aria-expanded'],'false');
 assert.equal(el('stations-confirmation').hidden,true);
 action('⋯').listeners.click();el('stations-speaker').value='Kitchen';el('stations-speaker').listeners.change();
 assert.equal(action('⋯').attrs['aria-expanded'],'false');
-clickAction('Test playback…');assert.match(el('stations-confirm-text').textContent,/Kitchen/);
+await clickAction('Test playback…');assert.match(el('stations-confirm-text').textContent,/Kitchen/);
 assert.equal(action('⋯').attrs['aria-expanded'],'false');assert.equal(focused,el('stations-confirm'));
 el('stations-cancel').listeners.click();assert.equal(focused,action('⋯'));assert.equal(el('stations-confirmation').hidden,true);
 """)
+
+
+def test_direct_test_requires_separate_risk_consent_and_never_claims_quiet():
+    checks('''
+response=async()=>ok({stations:[station]}); await ui.open();
+capabilities=async url=>ok(url.endsWith('/readiness') ? {available:false,reason:'Configure WISP_BASE_URL in Settings'} : {available:true,experimental:true,quiet_start_guaranteed:false,duration_seconds:10,target_volume:5});
+await clickAction('Test playback…');
+assert.equal(capabilityReads.length,2); assert.equal(calls.length,1);
+assert.equal(el('stations-direct-risk').hidden,false);
+assert.equal(el('stations-accept-risk').checked,false);
+assert.equal(el('stations-confirm').disabled,true);
+assert.match(el('stations-confirm-text').textContent,/remembered volume/);
+assert.match(el('stations-confirm-text').textContent,/closing the app does not stop/);
+assert.doesNotMatch(el('stations-confirm').textContent,/quiet|Play at volume 5/i);
+await ui.confirm(); assert.equal(calls.length,1);
+el('stations-accept-risk').checked=true; el('stations-accept-risk').listeners.change();
+assert.equal(el('stations-confirm').disabled,false);
+response=async()=>ok({state:'accepted',operation:{state:'accepted'}});
+await ui.confirm(); await ui.confirm();
+assert.equal(calls.length,2);
+assert.equal(calls[1].url,'/api/Living%20Room/stations/jazz/direct-test');
+assert.deepEqual(JSON.parse(calls[1].opts.body),{confirmed:true,accept_startup_volume_risk:true});
+assert.equal(calls[1].opts.signal,undefined);
+assert.match(el('stations-message').textContent,/not confirmed playing/);
+assert.equal(plays[0].options.direct,true);
+assert.doesNotMatch(el('stations-message').textContent,/Quiet/);
+''')
+
+
+def test_direct_consent_resets_when_speaker_changes_and_cannot_authorize_another_test():
+    checks('''
+response=async()=>ok({stations:[station]}); await ui.open();
+capabilities=async url=>ok(url.endsWith('/readiness') ? {available:false,reason:'Configure WISP_BASE_URL in Settings'} : {available:true,experimental:true,quiet_start_guaranteed:false,duration_seconds:10,target_volume:5});
+await clickAction('Test playback…');
+el('stations-accept-risk').checked=true;
+el('stations-speaker').value='Kitchen'; el('stations-speaker').listeners.change();
+await ui.confirm(); assert.equal(calls.length,1);
+await clickAction('Test playback…');
+assert.equal(el('stations-accept-risk').checked,false);
+assert.equal(el('stations-confirm').disabled,true);
+assert.match(el('stations-confirm-text').textContent,/Kitchen/);
+''')
+
+
+def test_native_readiness_uses_existing_quiet_path_without_experimental_request():
+    checks('''
+response=async()=>ok({stations:[station]}); await ui.open();
+await clickAction('Test playback…');
+assert.equal(capabilityReads.length,1);
+assert.equal(el('stations-direct-risk').hidden,true);
+assert.equal(el('stations-confirm').disabled,false);
+response=async()=>ok({state:'accepted'}); await ui.confirm();
+assert.equal(calls[1].url,'/api/Living%20Room/stations/jazz/play');
+assert.deepEqual(JSON.parse(calls[1].opts.body),{confirmed:true});
+''')
+
+
+def test_unknown_capability_or_unsupported_station_never_falls_back_or_writes():
+    checks('''
+response=async()=>ok({stations:[station]}); await ui.open();
+for (const responseBody of [{}, {available:false}, {available:true,experimental:true,quiet_start_guaranteed:false,duration_seconds:60,target_volume:5}, {available:true,experimental:true,quiet_start_guaranteed:true}]) {
+ capabilities=async url=>ok(url.endsWith('/readiness') ? {available:false,reason:'Configure WISP_BASE_URL in Settings'} : responseBody);
+ await clickAction('Test playback…'); await ui.confirm();
+ assert.equal(el('stations-confirmation').hidden,true); assert.equal(calls.length,1);
+}
+capabilities=async()=>ok({radio:{available:true}}); // old server cannot authorize new fallback
+await clickAction('Test playback…'); await ui.confirm();
+assert.equal(calls.length,1);
+assert.match(el('stations-message').textContent,/No playback request was sent/);
+''')
+
+
+def test_stale_capability_read_cannot_confirm_for_new_speaker_or_after_navigation():
+    checks('''
+response=async()=>ok({stations:[station]}); await ui.open();
+let finish; capabilities=()=>new Promise(resolve=>finish=resolve);
+const pending=clickAction('Test playback…');
+el('stations-speaker').value='Kitchen'; el('stations-speaker').listeners.change();
+finish(ok({available:true,mode:'native'})); await pending;
+assert.equal(el('stations-confirmation').hidden,true);
+assert.equal(capabilityReads[0].opts.signal.aborted,true);
+const next=clickAction('Test playback…'); ui.close();
+finish(ok({available:true,mode:'native'})); await next;
+assert.equal(el('stations-confirmation').hidden,true); await ui.confirm();
+assert.equal(calls.length,1);
+''')
+
+
+def test_ready_relay_uses_normal_play_without_direct_volume_risk():
+    checks(r'''
+response=async()=>ok({stations:[station]}); await ui.open();
+capabilities=async()=>ok({available:true,mode:'relay',requires_idle:true,requires_wisp_running:true,volume_gated:true,hardware_verified:false});
+await clickAction('Test playback…');
+assert.equal(capabilityReads.length,1);
+assert.match(capabilityReads[0].url,/stations\/jazz\/readiness$/);
+assert.equal(el('stations-direct-risk').hidden,true);
+assert.match(el('stations-confirm-text').textContent,/requires an idle speaker/);
+assert.match(el('stations-confirm-text').textContent,/Wisp must remain running/);
+response=async()=>ok({state:'accepted'}); await ui.confirm();
+assert.match(calls[1].url,/\/play$/);
+assert.deepEqual(JSON.parse(calls[1].opts.body),{confirmed:true});
+''')
+
+
+def test_schedule_readiness_shows_backend_reason_and_keeps_choice():
+    checks('''
+response=async()=>ok({stations:[station]});
+capabilities=async()=>ok({available:false,mode:'unavailable',reason:'Configure WISP_BASE_URL with an HTTP address reachable by the speaker.'});
+await ui.loadSchedule(station.id);
+assert.equal(el('f-station').value,station.id);
+assert.match(el('station-schedule-help').textContent,/Configure WISP_BASE_URL/);
+assert.match(el('station-schedule-help').textContent,/selection is kept/);
+capabilities=async()=>ok({available:true,mode:'relay',requires_wisp_running:true,hardware_verified:false});
+await el('f-station').listeners.change();
+assert.match(el('station-schedule-help').textContent,/Wisp must stay running/);
+assert.match(el('station-schedule-help').textContent,/playback still needs verification/);
+assert.equal(el('f-station').value,station.id);
+''')
+
+
+def test_stale_schedule_readiness_never_replaces_new_selection_or_navigation():
+    checks('''
+response=async()=>ok({stations:[station]});
+await ui.loadSchedule(station.id);
+let finish; capabilities=()=>new Promise(resolve=>finish=resolve);
+const old=el('f-station').listeners.change();
+el('f-station').value=''; await el('f-station').listeners.change();
+finish(ok({available:false,reason:'OLD'})); await old;
+assert.doesNotMatch(el('station-schedule-help').textContent,/OLD/);
+el('f-station').value=station.id;
+const next=el('f-station').listeners.change(); ui.onViewChange('speaker');
+finish(ok({available:false,reason:'STALE'})); await next;
+assert.doesNotMatch(el('station-schedule-help').textContent,/STALE/);
+''')

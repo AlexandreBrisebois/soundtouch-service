@@ -13,6 +13,8 @@
     let generation = 0, controller = null, active = false, origin = 'hub';
     let stations = [], confirmation = null, writing = false, openMenu = null;
     let scheduleGeneration = 0, scheduleController = null;
+    let testGeneration = 0, testController = null;
+    let readinessGeneration = 0, readinessController = null;
     const message = value => { el('stations-message').textContent = value; };
     function node(tag, value, className) {
       const item = doc.createElement(tag); item.textContent = value;
@@ -32,6 +34,8 @@
       return body;
     }
     function clearConfirmation(restoreFocus = false) {
+      testGeneration += 1; if (testController) testController.abort();
+      el('stations-direct-risk').hidden = true; el('stations-accept-risk').checked = false;
       const previous = confirmation; confirmation = null; el('stations-confirmation').hidden = true;
       if (restoreFocus && previous && previous.trigger && previous.trigger.isConnected) previous.trigger.focus();
     }
@@ -39,7 +43,7 @@
       el('stations-add').disabled = writing;
       el('stations-refresh').disabled = writing;
       el('stations-speaker').disabled = writing;
-      el('stations-confirm').disabled = writing;
+      el('stations-confirm').disabled = writing || (confirmation?.kind === 'direct' && !el('stations-accept-risk').checked);
       el('stations-add-form').setAttribute('aria-busy', String(writing));
       render();
     }
@@ -85,7 +89,7 @@
         function menuItem(label, action, disabled) {
           const item = button(label, () => {
             if (!active || writing || item.disabled || !openMenu || openMenu.toggle !== toggle) return;
-            closeMenu(true); action();
+            closeMenu(true); return action();
           }, disabled);
           item.setAttribute('role', 'menuitem'); item.tabIndex = -1;
           menu.append(item); return item;
@@ -130,17 +134,46 @@
     doc.addEventListener('focusin', event => {
       if (openMenu && !openMenu.wrapper.contains(event.target)) closeMenu();
     });
-    function prompt(kind, station) {
+    async function prompt(kind, station) {
       if (writing || !active) return;
       const speaker = el('stations-speaker').value;
       if (kind === 'play' && !speaker) return;
-      confirmation = {kind, station: {...station}, speaker, trigger: doc.activeElement};
-      el('stations-confirm-text').textContent = kind === 'play'
-        ? `Play “${station.name}” on ${speaker} at volume 5? This can replace current audio. A listening check is still needed; acceptance does not confirm sound.`
+      const trigger = doc.activeElement;
+      clearConfirmation();
+      let directInfo = null, readiness = null;
+      if (kind === 'play') {
+        const ticket = ++testGeneration;
+        testController = new AbortController();
+        const fresh = () => active && ticket === testGeneration && speaker === el('stations-speaker').value;
+        message('Checking playback options. No audio has been started.');
+        try {
+          const overview = await request(`/api/${encodeURIComponent(speaker)}/stations/${encodeURIComponent(station.id)}/readiness`, {signal:testController.signal});
+          if (!fresh()) return;
+          readiness = overview;
+          if (overview.available !== true) {
+            // Only an explicitly unavailable native path may offer a different test.
+            if (overview.available !== false) throw new Error('Playback options could not be confirmed. Refresh before testing.');
+            directInfo = await request(`/api/${encodeURIComponent(speaker)}/stations/${encodeURIComponent(station.id)}/direct-test`, {signal:testController.signal});
+            if (!fresh()) return;
+            if (directInfo.available !== true || directInfo.experimental !== true || directInfo.quiet_start_guaranteed !== false || directInfo.duration_seconds !== 10 || directInfo.target_volume !== 5) {
+              message(`${readiness.reason || 'This station cannot be tested with the current setup.'} No audio was started.`); return;
+            }
+            kind = 'direct';
+          }
+        } catch (error) { if (fresh()) message(`${error.message} No playback request was sent.`); return; }
+      }
+      confirmation = {kind, station: {...station}, speaker, trigger};
+      el('stations-confirm-text').textContent = kind === 'direct'
+        ? `Experimental test of “${station.name}” on ${speaker}. Audio may start at the speaker’s remembered volume before Wisp can lower it to 5. Keep physical Stop within reach. Wisp attempts to stop after 10 seconds; closing the app does not stop direct radio. Stop other controllers and schedules first. This does not enable speaker buttons or scheduled radio.`
+        : kind === 'play'
+        ? `Play “${station.name}” on ${speaker} at volume 5? ${readiness?.requires_idle ? 'Stop current audio first; this test requires an idle speaker. Wisp must remain running.' : 'This can replace current audio.'} A listening check is still needed; acceptance does not confirm sound.`
         : `Remove “${station.name}” from your station library? Existing presets, schedules and audio already playing stay intact. Station metadata is retained privately for existing playback and presets. You can add the stream again later.`;
-      el('stations-confirm').textContent = kind === 'play' ? 'Play at volume 5' : 'Remove station';
+      el('stations-confirm').textContent = kind === 'direct' ? 'Run experimental 10-second test' : kind === 'play' ? 'Play at volume 5' : 'Remove station';
+      el('stations-direct-risk').hidden = kind !== 'direct';
+      el('stations-confirm').disabled = kind === 'direct';
       el('stations-confirmation').hidden = false;
-      el('stations-confirm').focus();
+      message(kind === 'direct' ? 'Experimental option available; speaker support is checked when the test runs. No audio has been started.' : 'Review before confirming.');
+      el(kind === 'direct' ? 'stations-accept-risk' : 'stations-confirm').focus();
     }
     async function refresh() {
       if (!active || writing) return;
@@ -196,14 +229,17 @@
     }
     async function confirm() {
       if (!confirmation || writing || !active) return;
+      if (confirmation.kind === 'direct' && !el('stations-accept-risk').checked) return;
       const chosen = confirmation; clearConfirmation();
       const ticket = ++generation; if (controller) controller.abort();
       writing = true; setBusy();
       try {
-        const path = chosen.kind === 'play'
+        const path = chosen.kind === 'direct'
+          ? `/api/${encodeURIComponent(chosen.speaker)}/stations/${encodeURIComponent(chosen.station.id)}/direct-test`
+          : chosen.kind === 'play'
           ? `/api/${encodeURIComponent(chosen.speaker)}/stations/${encodeURIComponent(chosen.station.id)}/play`
           : `/api/stations/${encodeURIComponent(chosen.station.id)}`;
-        const options = post({confirmed: true}); if (chosen.kind === 'remove') options.method = 'DELETE';
+        const options = post(chosen.kind === 'direct' ? {confirmed: true, accept_startup_volume_risk: true} : {confirmed: true}); if (chosen.kind === 'remove') options.method = 'DELETE';
         // Writes deliberately survive navigation and are never retried automatically.
         const result = await request(path, options);
         if (!active || ticket !== generation) return;
@@ -211,21 +247,37 @@
           stations = stations.filter(station => station.id !== chosen.station.id); render();
           message('Station removed from the library. Existing presets, schedules and current audio stay intact.');
         } else {
-          message('Quiet playback requested. Listen to confirm sound; acceptance is not proof of playback.');
-          deps.onPlay(result, chosen.speaker);
+          message(chosen.kind === 'direct' ? 'Experimental test requested, not confirmed playing. Keep physical Stop within reach; closing this page does not stop radio.' : 'Quiet playback requested. Listen to confirm sound; acceptance is not proof of playback.');
+          deps.onPlay(result, chosen.speaker, {direct: chosen.kind === 'direct'});
         }
       } catch (error) {
-        if (active && ticket === generation) message(`${error.message} ${chosen.kind === 'play' ? 'Playback may have started. Check the speaker before retrying.' : 'Removal may have completed. Refresh before retrying.'}`);
+        if (active && ticket === generation) message(`${error.message} ${chosen.kind !== 'remove' ? 'Playback may have started. Check the speaker before retrying.' : 'Removal may have completed. Refresh before retrying.'}`);
       } finally {
         writing = false; setBusy();
         if (active && ticket !== generation) message('The earlier request finished. Refresh and check the speaker before another change.');
+      }
+    }
+    async function checkScheduleReadiness() {
+      if (readinessController) readinessController.abort();
+      readinessController = new AbortController(); const ticket = ++readinessGeneration;
+      const stationId = el('f-station').value, speaker = deps.getSpeaker();
+      if (!stationId) { el('station-schedule-help').textContent = 'Choose a station. No speaker button is needed.'; return; }
+      el('station-schedule-help').textContent = 'Checking this station’s setup…';
+      try {
+        const result = await request(`/api/${encodeURIComponent(speaker)}/stations/${encodeURIComponent(stationId)}/readiness`, {signal:readinessController.signal});
+        if (ticket !== readinessGeneration || stationId !== el('f-station').value || speaker !== deps.getSpeaker()) return;
+        el('station-schedule-help').textContent = result.available === true
+          ? `Setup available. No speaker button is needed. ${result.requires_wisp_running ? 'Wisp must stay running and reachable by the speaker. ' : ''}Actual playback still needs verification.`
+          : `Not ready: ${result.reason || 'The station’s setup could not be confirmed.'} Your selection is kept; an enabled schedule cannot be saved until setup is ready.`;
+      } catch (_) {
+        if (ticket === readinessGeneration) el('station-schedule-help').textContent = 'Could not check this station’s setup. Your selection is kept; saving will validate it again.';
       }
     }
     async function loadSchedule(initialId) {
       if (scheduleController) scheduleController.abort();
       scheduleController = new AbortController(); const ticket = ++scheduleGeneration;
       const select = el('f-station'); select.replaceChildren();
-      const placeholder = () => { const option = node('option', 'Use a favorite, numbered preset or AUX'); option.value = ''; return option; };
+      const placeholder = () => { const option = node('option', 'Choose a station…'); option.value = ''; return option; };
       select.append(placeholder());
       if (initialId) { const option = node('option', 'Saved station · checking library…'); option.value = initialId; select.append(option); }
       select.value = initialId || ''; select.disabled = true;
@@ -241,7 +293,7 @@
           const option = node('option', 'Saved station removed from library · existing schedule binding retained'); option.value = chosen; select.append(option);
         }
         select.value = chosen;
-        el('station-schedule-help').textContent = 'This station plays directly, without occupying a speaker button. Wisp must stay available.';
+        await checkScheduleReadiness();
       } catch (_) {
         if (ticket === scheduleGeneration) el('station-schedule-help').textContent = 'Station library could not be checked. Any existing station binding is retained. Retry before changing it.';
       } finally { if (ticket === scheduleGeneration) select.disabled = false; }
@@ -253,17 +305,21 @@
     el('stations-speaker').addEventListener('change', () => { clearConfirmation(); render(); });
     el('stations-add-form').addEventListener('submit', add);
     el('stations-confirm').addEventListener('click', confirm);
+    el('stations-accept-risk').addEventListener('change', () => {
+      el('stations-confirm').disabled = writing || (confirmation?.kind === 'direct' && !el('stations-accept-risk').checked);
+    });
     el('stations-cancel').addEventListener('click', () => clearConfirmation(true));
     el('f-station').addEventListener('change', () => {
       if (el('f-station').value) deps.clearFavorite();
       if (deps.onStationSelected) deps.onStationSelected(!!el('f-station').value);
+      return checkScheduleReadiness();
     });
     return {open, close, refresh, add, confirm, loadSchedule,
       scheduleValue() { return el('f-station').value || null; },
       clearScheduleChoice() { el('f-station').value = ''; if (deps.onStationSelected) deps.onStationSelected(false); },
       onViewChange(view) {
         if (view !== 'stations') close();
-        if (view !== 'form') { scheduleGeneration += 1; if (scheduleController) scheduleController.abort(); }
+        if (view !== 'form') { readinessGeneration += 1; if (readinessController) readinessController.abort(); scheduleGeneration += 1; if (scheduleController) scheduleController.abort(); }
       },
     };
   }

@@ -173,11 +173,25 @@ def overview(speaker: str) -> dict[str, Any]:
             saved.append(visible)
     base = radio_base()
     ready = any(s['source'] == 'LOCAL_INTERNET_RADIO' and s['ready'] for s in sources)
-    available = bool(base and ready and '/storePreset' in capabilities(found['ip']))
+    supported = capabilities(found['ip'])
+    blockers = []
+    if not base:
+        blockers.append('wisp_base_url_missing')
+    if not ready:
+        blockers.append('local_internet_radio_not_ready')
+    if '/storePreset' not in supported:
+        blockers.append('native_preset_programming_unavailable')
+    available = not blockers
     return {'favorites': saved, 'speaker_id': found['device_id'],
             'sources': [{k: s[k] for k in ('id', 'name', 'ready')} for s in sources if s['source'] == 'STORED_MUSIC'],
             'presets': [{'slot': slot, 'name': item['name'] if item else 'Empty'} for slot, item in slots.items()],
-            'radio': {'available': available, 'reason': 'Radio needs a configured WISP_BASE_URL reachable by the speaker, a ready LOCAL_INTERNET_RADIO source and native preset support. Wisp will not configure these on the speaker.' if not available else 'Hardware playback still needs testing.'}}
+            'radio': {'available': available, 'reason': 'Native radio buttons are not ready. See readiness details; experimental direct tests do not enable speaker buttons.' if not available else 'Hardware playback still needs testing.',
+                      'native_preset': {'available': available, 'blockers': blockers},
+                      'station_playback': {'available': bool(base and ready and '/select' in supported),
+                                           'requires_source': 'LOCAL_INTERNET_RADIO'},
+                      'direct_test': {'experimental': True, 'requires_explicit_risk_acceptance': True,
+                                      'quiet_start_guaranteed': False, 'automatic_schedules': False,
+                                      'physical_presets': False}}}
 
 
 def browse(speaker: str, data: dict[str, Any]) -> dict[str, Any]:

@@ -451,3 +451,8 @@ input[type="range"]#f-volume { width: 100%; }
 @media (min-width: 1024px) {
   .header-title { font-size: 28px; }
 }
+
+/* Supporting setup stays secondary to speakers and schedules. */
+.support-settings { margin-top: 24px; border-top: 1px solid var(--border, #ddd); padding-top: 16px; }
+.support-settings > summary { cursor: pointer; padding: 10px 0; font-weight: 600; }
+.support-settings > summary:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }
