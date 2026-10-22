@@ -1,0 +1,118 @@
+version: '3'
+
+silent: true
+
+env:
+  PORT: '9001'
+  CONFIG_FILE: '{{.ROOT_DIR}}/.wisp-dev.json'
+
+tasks:
+  up:
+    desc: Start local Wisp
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - |
+        bash -eu <<'BASH'
+        test -x .venv/bin/python || {
+          echo "Missing .venv/bin/python"; exit 1;
+        }
+        mkdir .wisp-run 2>/dev/null || {
+          echo "Run task down first; startup state already exists."; exit 1;
+        }
+        trap 'rmdir .wisp-run 2>/dev/null || true' EXIT
+
+        if lsof -nP -iTCP:9001 -sTCP:LISTEN >/dev/null 2>&1; then
+          echo "Port 9001 is occupied."; exit 1
+        fi
+
+        if [ ! -e "$CONFIG_FILE" ]; then
+          .venv/bin/python -c 'import os; from pathlib import Path; Path(os.environ["CONFIG_FILE"]).open("x").write("{\"version\":1,\"schedules\":{}}\n")'
+        fi
+
+        nohup .venv/bin/python -u -m app.main > .wisp.log 2>&1 < /dev/null &
+        pid=$!
+        printf '%s\n' "$pid" > .wisp-run/pid
+        sleep 2
+
+        if ! kill -0 "$pid" 2>/dev/null; then
+          cat .wisp.log
+          rm -f .wisp-run/pid
+          exit 1
+        fi
+
+        ps -p "$pid" -o lstart= -o command= > .wisp-run/identity
+        echo "Wisp process started: http://localhost:9001"
+        echo "Logs: tail -f .wisp.log"
+        BASH
+
+  down:
+    desc: Stop this checkout's Wisp process
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - |
+        bash -eu <<'BASH'
+        test -d .wisp-run || { echo "Not running."; exit 0; }
+        test -s .wisp-run/pid || {
+          echo "Incomplete startup state; inspect .wisp-run."; exit 1;
+        }
+        pid=$(cat .wisp-run/pid)
+        case "$pid" in
+          ''|*[!0-9]*|0|1) echo "Invalid PID."; exit 1 ;;
+        esac
+
+        if kill -0 "$pid" 2>/dev/null; then
+          identity=$(cat .wisp-run/identity)
+          current=$(ps -p "$pid" -o lstart= -o command=)
+          test "$current" = "$identity" || {
+            echo "Process identity changed; refusing to stop it."; exit 1;
+          }
+          printf '%s\n' "$current" | grep -F -- '-m app.main' >/dev/null
+          lsof -a -p "$pid" -d cwd -Fn | grep -Fx "n$(pwd -P)" >/dev/null
+          kill -TERM "$pid"
+          for i in 1 2 3 4 5; do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 1
+          done
+          if kill -0 "$pid" 2>/dev/null; then
+            echo "Still stopping; state retained. Try task down again."; exit 1
+          fi
+        fi
+
+        rm -f .wisp-run/pid .wisp-run/identity
+        rmdir .wisp-run
+        echo "Wisp stopped."
+        BASH
+
+  tag:
+    desc: Create and push a release tag
+    dir: '{{.ROOT_DIR}}'
+    requires:
+      vars: [VERSION]
+    env:
+      RELEASE_TAG: '{{.VERSION}}'
+    cmds:
+      - |
+        bash -eu <<'BASH'
+        printf '%s\n' "$RELEASE_TAG" |
+          grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-beta\.[1-9][0-9]*)?$' ||
+          { echo "Use vX.Y.Z or vX.Y.Z-beta.N"; exit 1; }
+        test "${#RELEASE_TAG}" -le 128
+        test -z "$(git status --porcelain)" || {
+          echo "Commit or resolve local changes first."; exit 1;
+        }
+
+        git fetch origin main
+        case "$RELEASE_TAG" in
+          *-beta.*) ;;
+          *) git merge-base --is-ancestor HEAD origin/main || {
+            echo "Stable releases must already be on origin/main."; exit 1;
+          } ;;
+        esac
+
+        existing=$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG")
+        test -z "$existing" || {
+          echo "Remote tag already exists."; exit 1;
+        }
+        git tag -a "$RELEASE_TAG" -m "Release $RELEASE_TAG"
+        git push origin "refs/tags/$RELEASE_TAG"
+        BASH
