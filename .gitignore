@@ -216,3 +216,6 @@ Icon?
 .Trashes
 
 favorites.json
+
+# Local container testing state
+.wisp-container/

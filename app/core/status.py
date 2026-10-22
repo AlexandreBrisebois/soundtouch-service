@@ -178,3 +178,15 @@ def get_device_id(ip: str, *, timeout: float = HTTP_GET_TIMEOUT_SECONDS) -> str 
     if root is None:
         return None
     return root.get("deviceID") or None
+
+
+def get_device_info(ip: str) -> dict[str, str] | None:
+    """Read identity and name for an explicitly configured LAN speaker."""
+    root = _get_xml(ip, "info", "info")
+    if root is None:
+        return None
+    device_id = (root.get("deviceID") or "").strip()
+    name = (root.findtext("name") or "").strip()
+    if not device_id or not name or len(name) > 256 or len(device_id) > 128:
+        return None
+    return {"name": name, "ip": ip, "device_id": device_id}
