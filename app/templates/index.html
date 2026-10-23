@@ -110,6 +110,7 @@
         <div class="detail-speaker-name" id="detail-speaker-name"></div>
         <div class="detail-speaker-status" id="detail-speaker-status"></div>
         <p class="schedule-meta" id="detail-operation" role="status" aria-live="polite" aria-atomic="true">No recent automation run.</p>
+        <button class="btn-pause" id="btn-stop-radio" type="button" hidden>Stop radio</button>
         <p class="schedule-meta" id="detail-physical-stop" role="alert" hidden>Radio may still be playing. Use the speaker’s physical Stop button and check its volume. Closing Wisp does not stop direct radio.</p>
         <button class="btn-pause" id="btn-cancel-operation" hidden aria-describedby="cancel-operation-help">Cancel automation</button>
         <p class="schedule-meta" id="cancel-operation-help" hidden>Cancels pending playback and fades. Audio already playing may continue.</p>
@@ -134,7 +135,9 @@
         </div>
         <p id="presets-message" role="status" aria-live="polite" aria-atomic="true"></p>
         <button class="preset-action" id="presets-refresh" type="button">Refresh</button>
-        <h3>Your favorites</h3><div id="preset-favorites"></div>
+        <h3>Speaker buttons</h3><div id="preset-native-slots"></div>
+        <h3>Connected services</h3><p class="preset-help">Service availability reported by this speaker. This does not verify playback.</p><div id="preset-services"></div>
+        <h3>Wisp favorites</h3><div id="preset-favorites"></div>
         <h3>Music connected to this speaker</h3><p class="preset-help">These music libraries are already registered on this speaker. This is not a scan of every NAS on your network.</p><div id="preset-sources"></div>
         <div id="preset-browser" hidden>
           <h3 id="preset-browser-title"></h3>
@@ -313,6 +316,11 @@
       <button class="preset-action" id="stations-refresh" type="button">Refresh stations</button>
       <div id="stations-confirmation" class="preset-confirmation" hidden>
         <p id="stations-confirm-text" class="preset-help"></p>
+        <div id="stations-listening-volume" hidden>
+          <label class="form-label" for="stations-volume">Listening volume</label>
+          <input class="form-input" id="stations-volume" type="number" min="0" max="100" step="1" inputmode="numeric" aria-describedby="stations-volume-help">
+          <p class="preset-help" id="stations-volume-help"></p>
+        </div>
         <label id="stations-direct-risk" class="preset-help" hidden>
           <input type="checkbox" id="stations-accept-risk" aria-describedby="stations-confirm-text">
           I accept the remembered startup volume risk and have physical Stop within reach.
@@ -471,7 +479,10 @@ function wait(ms) {
 }
 
 /* ─── SCREEN 1: HUB ──────────────────────────────────────────────── */
-async function loadHub() {
+let hubLoadGeneration = 0;
+async function loadHub(forceRefresh = false) {
+  forceRefresh = forceRefresh === true;
+  const generation = ++hubLoadGeneration;
   showView('hub');
   const list    = document.getElementById('speaker-list');
   const spinner = document.getElementById('hub-spinner');
@@ -480,27 +491,25 @@ async function loadHub() {
 
   try {
     const [discoveryResult, schedulesResult] = await Promise.allSettled([
-      fetchWithTimeout('/api/discover', 4000),
+      fetchWithTimeout(forceRefresh ? '/api/discover?refresh=true' : '/api/discover', forceRefresh ? 20000 : 4000),
       fetchWithTimeout('/api/schedules', 4000)
     ]);
 
-    if (discoveryResult.status === 'fulfilled' && discoveryResult.value.ok) {
-      const discoveryData = await discoveryResult.value.json();
-      discoveredSpeakers = Array.isArray(discoveryData) ? discoveryData : [];
-    } else {
-      discoveredSpeakers = [];
-    }
-
-    if (schedulesResult.status === 'fulfilled' && schedulesResult.value.ok) {
-      allSchedules = await schedulesResult.value.json();
-    } else {
-      allSchedules = {};
-    }
+    const discoveryData = discoveryResult.status === 'fulfilled' && discoveryResult.value.ok
+      ? await discoveryResult.value.json() : [];
+    const schedulesData = schedulesResult.status === 'fulfilled' && schedulesResult.value.ok
+      ? await schedulesResult.value.json() : {};
+    if (generation !== hubLoadGeneration || activeView !== 'hub') return;
+    discoveredSpeakers = Array.isArray(discoveryData) ? discoveryData : [];
+    allSchedules = schedulesData;
   } catch {
+    if (generation !== hubLoadGeneration || activeView !== 'hub') return;
     discoveredSpeakers = [];
     allSchedules = {};
   }
+  if (generation !== hubLoadGeneration || activeView !== 'hub') return;
   spinner.style.display = 'none';
+  if (forceRefresh && !discoveredSpeakers.length) toast('Speaker discovery unavailable or no speakers found. Check the network and try again.');
 
   // Keep configured speakers reachable in the UI even when discovery is offline.
   Object.keys(allSchedules).forEach(name => {
@@ -633,7 +642,17 @@ function operationSummary(operation) {
     skipped: 'Skipped',
     canceled: 'Cancelled',
   };
-  const label = labels[operation.state] || 'Unknown';
+  const recoveryLabels = {
+    pending: 'Recovery pending; audio is not confirmed',
+    recovering: 'Attempting relay recovery; audio is not confirmed',
+    recovered: 'Speaker reported recovered playback; audibility not verified',
+    declined: 'Recovery declined; Wisp will not retry',
+    failed: operation.reason === 'radio_recovery_worker_unavailable'
+      ? 'Recovery failed; worker unavailable and Wisp will not retry'
+      : 'Recovery failed; Wisp will not retry',
+    canceled: 'Recovery cancelled. No speaker command was sent',
+  };
+  const label = recoveryLabels[operation.recovery_state] || labels[operation.state] || 'Unknown';
   const schedule = operation.schedule_name ? `${operation.schedule_name} · ` : '';
   const reason = operation.reason ? ` · ${String(operation.reason).replace(/_/g, ' ')}` : '';
   const updated = Number.isFinite(operation.updated_at)
@@ -642,14 +661,44 @@ function operationSummary(operation) {
   return `Last run: ${schedule}${label}${reason}${updated}${safety}`;
 }
 
+const pendingRadioStops = new Set();
 function renderOperation(operation) {
   document.getElementById('detail-operation').textContent = operationSummary(operation);
   document.getElementById('detail-physical-stop').hidden = operation?.physical_stop_may_be_needed !== true;
   const active = operationIsActive(operation);
   document.getElementById('btn-cancel-operation').hidden = !active;
   document.getElementById('cancel-operation-help').hidden = !active;
+  const stop = document.getElementById('btn-stop-radio');
+  stop.hidden = !(operation?.listening_session === true
+    && ['playing','recovery_pending','recovering'].includes(operation?.state)
+    && operation?.station_id && operation?.speaker_id && operation?.operation_id);
+  stop.disabled = pendingRadioStops.has(operation?.operation_id);
   updateRunButton();
 }
+
+document.getElementById('btn-stop-radio').addEventListener('click', async () => {
+  const speaker = currentSpeaker, chosen = latestOperation;
+  if (!chosen || chosen.listening_session !== true
+      || !['playing','recovery_pending','recovering'].includes(chosen.state)
+      || !chosen.station_id || !chosen.speaker_id || !chosen.operation_id
+      || pendingRadioStops.has(chosen.operation_id)) return;
+  pendingRadioStops.add(chosen.operation_id); renderOperation(chosen);
+  try {
+    const result = await requestJson(`/api/${encodeURIComponent(speaker)}/stations/${encodeURIComponent(chosen.station_id)}/stop`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({speaker_id:chosen.speaker_id, operation_id:chosen.operation_id}),
+    });
+    if (currentSpeaker !== speaker || latestOperation?.operation_id !== chosen.operation_id) return;
+    latestOperation = result.operation || null; renderOperation(latestOperation);
+    toast('Stop requested. Waiting for speaker confirmation.');
+    refreshPlayback(speaker);
+  } catch (error) {
+    if (currentSpeaker === speaker) toast(error.message || 'Stop could not be confirmed. Check speaker status.');
+  } finally {
+    pendingRadioStops.delete(chosen.operation_id);
+    if (currentSpeaker === speaker) renderOperation(latestOperation);
+  }
+});
 
 function nextRunSummary(runtime) {
   if (!runtime) return 'Next run unavailable';
@@ -1163,7 +1212,7 @@ document.getElementById('btn-save').addEventListener('click', async () => {
 });
 
 /* ─── Navigation ─────────────────────────────────────────────────── */
-document.getElementById('btn-refresh').addEventListener('click', loadHub);
+document.getElementById('btn-refresh').addEventListener('click', () => loadHub(true));
 document.getElementById('btn-back-hub').addEventListener('click', loadHub);
 document.getElementById('btn-back-speaker').addEventListener('click', () => {
   showView('speaker');
@@ -1216,7 +1265,7 @@ if (window.WispStationUI) {
       openSpeaker(speaker);
       latestOperation = result.operation || null;
       renderOperation(latestOperation);
-      toast(options.direct ? 'Experimental test requested; keep physical Stop nearby' : 'Quiet playback requested; listen to confirm sound');
+      toast(options.direct ? 'Experimental test requested; keep physical Stop nearby' : options.listening ? 'Radio requested; waiting for speaker confirmation' : 'Quiet playback requested; listen to confirm sound');
     },
   });
 }

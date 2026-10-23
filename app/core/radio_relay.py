@@ -28,6 +28,7 @@ class Session(TypedDict):
     owner: str
     station_id: str
     schedule_name: str | None
+    saved_url: str
     url: str
     gate: threading.Event
     connected: threading.Event
@@ -112,6 +113,9 @@ def close(session: Session, reason: str = 'canceled') -> None:
         session['gate'].set()
         _sessions.pop(session['token'], None)
         upstream, downstream, owner = session['upstream'], session['downstream'], session['owner']
+        ended = {key: session[key] for key in (
+            'device_id', 'speaker_ip', 'owner', 'station_id', 'schedule_name',
+            'saved_url', 'url')}
     # Never hold the registry lock across socket cleanup or a playback callback.
     if upstream is not None:
         try:
@@ -129,7 +133,7 @@ def close(session: Session, reason: str = 'canceled') -> None:
             pass
     if reason not in ('canceled', 'completed', 'shutdown'):
         from app.core import playback
-        playback.relay_ended(owner, reason)
+        playback.relay_ended(owner, reason, ended)
 
 
 def cancel_owner(owner: str) -> None:
@@ -157,6 +161,7 @@ def prepare(device_id: str, ip: str, owner: str, station_id: str,
         token = uuid.uuid4().hex
         session: Session = {'token': token, 'device_id': device_id, 'speaker_ip': ip,
                             'owner': owner, 'station_id': station_id, 'schedule_name': schedule_name,
+                            'saved_url': saved_url,
                             'url': f'{base}/api/radio-sessions/{token}/stream.mp3',
                             'gate': threading.Event(), 'connected': threading.Event(),
                             'closed': threading.Event(), 'consumed': False,

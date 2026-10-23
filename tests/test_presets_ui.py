@@ -210,3 +210,70 @@ assert.equal(el('speaker-settings').open,true);
 assert.equal(el('presets-panel').hidden,false);
 assert.equal(calls.length,1);
 ''')
+
+
+def test_native_slots_are_visible_without_wisp_favorites_and_refresh_rediscovers():
+    checks("""
+getResponse=async url=>ok(url.includes('/discover') ? [] : {favorites:[], sources:[], services:[{name:'Spotify',ready:true}], presets:[{slot:1,name:'Existing playlist'}]});
+await ui.open('Living Room');
+assert.equal(el('preset-selection').hidden,true);
+assert.equal(el('preset-native-slots').children[0].textContent,'Button 1: Existing playlist');
+assert.equal(el('preset-services').children[0].textContent,'Spotify · Ready');
+assert.equal(el('preset-favorites').children[0].textContent,'No saved favorites yet.');
+await el('presets-refresh').listeners.click(); await flush();
+assert.equal(calls[calls.length-2].url,'/api/discover?refresh=true');
+assert.equal(calls[calls.length-1].url,'/api/Living%20Room/favorites');
+assert(calls.every(c=>!c.opts.method || c.opts.method==='GET'));
+""")
+
+
+def test_refresh_discovery_failure_is_visible_and_does_not_read_old_speaker():
+    checks("""
+getResponse=async()=>ok({favorites:[],sources:[],presets:[{slot:1,name:'Old'}]});
+await ui.open('Living Room');
+getResponse=async()=>({ok:false});
+await ui.open('Living Room',true);
+assert.match(el('presets-message').textContent,/discovery failed/);
+assert.equal(el('preset-native-slots').children.length,0);
+assert.equal(el('presets-refresh').disabled,false);
+assert.equal(calls[calls.length-1].url,'/api/discover?refresh=true');
+""")
+
+
+def test_speaker_switch_rejects_native_slots_and_services_from_old_request():
+    checks("""
+let pending=[];
+getResponse=()=>new Promise(resolve=>pending.push(resolve));
+const old=ui.open('Living Room');
+current='Kitchen'; const next=ui.open(current);
+pending[1](ok({favorites:[],sources:[],services:[{name:'TuneIn',ready:true}],presets:[{slot:1,name:'Kitchen preset'}]})); await next;
+pending[0](ok({favorites:[],sources:[],services:[{name:'Spotify',ready:true}],presets:[{slot:1,name:'Old preset'}]})); await old;
+assert.equal(el('preset-native-slots').children[0].textContent,'Button 1: Kitchen preset');
+assert.equal(el('preset-services').children[0].textContent,'TuneIn · Ready');
+""")
+
+
+def test_speaker_read_deadline_reports_timeout_and_reenables_refresh():
+    checks("""
+const originalTimer=global.setTimeout;
+let expire;
+global.setTimeout=(fn,ms)=>{assert.equal(ms,45000); expire=fn; return 1;};
+getResponse=async(url,opts)=>new Promise((resolve,reject)=>opts.signal.addEventListener('abort',()=>reject(new Error('aborted'))));
+const pending=ui.open('Living Room',true);
+expire(); await pending;
+global.setTimeout=originalTimer;
+assert.match(el('presets-message').textContent,/timed out/);
+assert.equal(el('presets-refresh').disabled,false);
+""")
+
+
+def test_switch_during_rediscovery_does_not_fetch_previous_speaker():
+    checks("""
+let finish;
+getResponse=async url=>url.includes('discover') ? new Promise(resolve=>finish=resolve) : ok({favorites:[],sources:[],presets:[]});
+const old=ui.open('Living Room',true);
+current='Kitchen'; await ui.open(current);
+finish(ok([])); await old;
+assert(!calls.some(call=>call.url==='/api/Living%20Room/favorites'));
+assert.equal(el('presets-title').textContent,'Presets · Kitchen');
+""")

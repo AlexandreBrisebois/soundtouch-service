@@ -28,10 +28,14 @@ def _log_with_fields(level: int, message: str, **fields: Any) -> None:
 def _public_state(value: Any) -> Any:
   """Keep private content matching data out of every public status response."""
   if isinstance(value, dict):
+    private = {
+      "contentidentity", "sourceaccount", "location", "relaytoken", "relayurl",
+      "savedurl", "priorurl", "recoverygeneration", "generation", "token",
+    }
     return {
       key: _public_state(item)
       for key, item in value.items()
-      if key.replace("_", "").lower() not in {"contentidentity", "sourceaccount", "location"}
+      if key.replace("_", "").lower() not in private
     }
   if isinstance(value, list):
     return [_public_state(item) for item in value]
@@ -577,7 +581,8 @@ def api_discover() -> Any:
     """
     force_refresh = request.args.get("refresh", "").lower() == "true"
     if force_refresh:
-      discovery.safe_refresh_cache()
+      if not discovery.safe_refresh_cache():
+        return jsonify({"error": "Speaker discovery failed. Check the network and refresh again."}), 503
 
     devices = discovery.get_all_cached_devices()
     if not devices and not force_refresh:

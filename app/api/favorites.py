@@ -103,18 +103,69 @@ def station_stream(station_id: str) -> Any:
 
 @favorites_bp.post('/api/<speaker_name>/stations/<station_id>/play')
 def play_station(speaker_name: str, station_id: str) -> Any:
-    if body().get('confirmed') is not True:
-        raise favorites.FavoriteError('Confirm station playback at volume 5. For relay playback, stop current audio first.')
+    data = body()
+    volume = data.get('volume')
+    if isinstance(volume, bool) or not isinstance(volume, int) or not 0 <= volume <= 100:
+        raise favorites.FavoriteError('Choose a listening volume from 0 through 100.')
+    if not isinstance(data.get('speaker_id'), str) or not data['speaker_id'].strip():
+        raise favorites.FavoriteError('Refresh listening options and select the speaker again.')
+    return _start_station(speaker_name, station_id, data, volume, listening=True)
+
+
+def _start_station(speaker_name: str, station_id: str, data: dict[str, Any],
+                   volume: int, *, listening: bool) -> Any:
+    if data.get('confirmed') is not True:
+        raise favorites.FavoriteError('Confirm playback on the selected speaker first.')
     from app.core import radio_relay
     item = favorites.station(station_id)
     found = favorites.device(speaker_name)
+    if listening and data['speaker_id'] != found['device_id']:
+        raise favorites.FavoriteError('Speaker identity changed. Select the speaker again.')
     ready = radio_relay.readiness(item['url'], found['ip'])
     if not ready['available']:
         raise favorites.FavoriteError(ready['reason'])
-    operation = jobs.queue_station(speaker_name, found['device_id'], station_id)
+    try:
+        operation = jobs.queue_station(speaker_name, found['device_id'], station_id, volume, listening=listening)
+    except jobs.StationRequestConflict as exc:
+        return jsonify(error=str(exc)), 409
     if operation is None:
         return jsonify(error='Playback worker unavailable. No station was started.'), 503
     return jsonify(operation=operation, state='accepted', message='Station playback requested. No speaker button was changed.'), 202
+
+
+@favorites_bp.get('/api/<speaker_name>/stations/<station_id>/listening-options')
+def listening_options(speaker_name: str, station_id: str) -> Any:
+    from app.core import radio_relay, status
+    item = favorites.station(station_id)
+    found = favorites.device(speaker_name)
+    ready = radio_relay.readiness(item['url'], found['ip'])
+    volume = status.get_volume(found['ip']) if ready['available'] else None
+    if isinstance(volume, bool) or not isinstance(volume, int) or not 0 <= volume <= 100:
+        volume = None
+    response = jsonify(**ready, speaker_id=found['device_id'], volume=volume)
+    response.headers['Cache-Control'] = 'no-store'
+    return response
+
+
+@favorites_bp.post('/api/<speaker_name>/stations/<station_id>/test')
+def quiet_station_test(speaker_name: str, station_id: str) -> Any:
+    return _start_station(speaker_name, station_id, body(), 5, listening=False)
+
+
+@favorites_bp.post('/api/<speaker_name>/stations/<station_id>/stop')
+def stop_station(speaker_name: str, station_id: str) -> Any:
+    data = body()
+    if any(not isinstance(data.get(key), str) or not data[key].strip()
+           for key in ('speaker_id', 'operation_id')):
+        raise favorites.FavoriteError('Select the current listening session before stopping.')
+    try:
+        result = jobs.queue_station_stop(
+            speaker_name, data['speaker_id'], station_id, data['operation_id'])
+    except jobs.StationWorkerUnavailable:
+        return jsonify(error='Playback worker unavailable. No stop request was accepted.'), 503
+    if result is None:
+        return jsonify(error='This listening session is no longer current. Refresh speaker status.'), 409
+    return jsonify(operation=result, state='accepted'), 202
 
 
 @favorites_bp.get('/api/<speaker_name>/stations/<station_id>/direct-test')
@@ -141,7 +192,11 @@ def direct_test(speaker_name: str, station_id: str) -> Any:
     item = favorites.station(station_id)
     radio_stream.candidate(item['url'])  # Validate before creating/canceling any operation.
     found = favorites.device(speaker_name)
-    operation = jobs.queue_direct_radio_test(speaker_name, found['device_id'], station_id, item['url'])
+    try:
+        operation = jobs.queue_direct_radio_test(
+            speaker_name, found['device_id'], station_id, item['url'])
+    except jobs.StationRequestConflict as exc:
+        return jsonify(error=str(exc)), 409
     if operation is None:
         return jsonify(error='Playback worker unavailable. No test was started.'), 503
     return jsonify(operation=operation, state='accepted', warning=direct_radio.WARNING), 202

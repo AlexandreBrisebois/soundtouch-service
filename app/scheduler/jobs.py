@@ -411,20 +411,21 @@ def _queue_on_locked(speaker_name: str, schedule: Schedule, force: bool) -> dict
 
 
 def queue_off(speaker_name: str, schedule: Schedule) -> dict[str, Any] | None:
-    if BACKGROUND_WORKER_POOL is None:
-        return None
-    if schedule.get('station_id'):
-        op = playback.begin_radio_off(speaker_name, schedule['name'], schedule.get('speaker_id'), schedule['station_id'])
-        if op is None:
-            return {'state': 'skipped', 'reason': 'radio_schedule_no_longer_owner', 'terminal': True}
-    else:
-        op = playback.begin_nonradio_schedule_off(speaker_name, schedule['name'], schedule.get('speaker_id'))
-        if op is None:
-            return {'state': 'skipped', 'reason': 'radio_schedule_no_longer_owner', 'terminal': True}
-    if not submit_background_task(_execute_operation, playback.run_off, op, schedule['fade_out_duration']):
-        playback.finish(op, 'failed', 'worker_unavailable')
-        return None
-    return dict(op['outcome'])
+    with _queue_lock:
+        if BACKGROUND_WORKER_POOL is None:
+            return None
+        if schedule.get('station_id'):
+            op = playback.begin_radio_off(speaker_name, schedule['name'], schedule.get('speaker_id'), schedule['station_id'])
+            if op is None:
+                return {'state': 'skipped', 'reason': 'radio_schedule_no_longer_owner', 'terminal': True}
+        else:
+            op = playback.begin_nonradio_schedule_off(speaker_name, schedule['name'], schedule.get('speaker_id'))
+            if op is None:
+                return {'state': 'skipped', 'reason': 'radio_schedule_no_longer_owner', 'terminal': True}
+        if not submit_background_task(_execute_operation, playback.run_off, op, schedule['fade_out_duration']):
+            playback.finish(op, 'failed', 'worker_unavailable')
+            return None
+        return dict(op['outcome'])
 
 
 def cancel_operation(speaker_name: str, reason: str = 'manual_override') -> None:
@@ -491,7 +492,7 @@ def submit_background_task(func: Any, *args: Any, **kwargs: Any) -> bool:
         return False
     try:
         future = BACKGROUND_WORKER_POOL.submit(func, *args, **kwargs)
-    except RuntimeError:
+    except (RuntimeError, AttributeError):
         return False
     future.add_done_callback(_log_future_exception)
     return True
@@ -611,20 +612,106 @@ def get_current_config() -> SpeakerSchedules:
 
 
 
-def queue_station(speaker_name: str, speaker_id: str, station_id: str) -> dict[str, Any] | None:
+class StationRequestConflict(ValueError):
+    """A pending station operation has different user-selected semantics."""
+
+
+class StationWorkerUnavailable(RuntimeError):
+    """The Stop request was not accepted, so existing ownership is unchanged."""
+
+
+def _pending_station_request(previous: dict[str, Any] | None, station_id: str,
+                             speaker_id: str, volume: int, intent: str) -> dict[str, Any] | None:
+    if not previous or previous['terminal'] or previous.get('radio_request_intent') is None:
+        return None
+    if (previous.get('station_id') == station_id
+            and previous.get('speaker_id') == speaker_id
+            and previous.get('target_volume') == volume
+            and previous.get('radio_request_intent') == intent):
+        return previous
+    raise StationRequestConflict(
+        'Another radio request is still starting or stopping on this speaker. '
+        'Wait for its result before choosing a different station, volume, speaker, or playback mode.')
+
+
+def queue_station(speaker_name: str, speaker_id: str, station_id: str,
+                  volume: int = 5, *, listening: bool = False) -> dict[str, Any] | None:
     """Manual station play shares cancellation/serialization with routines."""
     with _queue_lock:
         name = 'Station ' + station_id
         previous = playback.last(speaker_name)
-        if previous and not previous['terminal'] and previous['schedule_name'] == name:
-            return previous
+        intent = 'listening' if listening else 'quiet_test'
+        pending = _pending_station_request(previous, station_id, speaker_id, volume, intent)
+        if pending is not None:
+            return pending
         if BACKGROUND_WORKER_POOL is None:
             return None
         op = playback.begin(speaker_name, name, speaker_id)
-        if not submit_background_task(_execute_operation, playback.run_on, op, None, 5, None, 2, True, None, station_id):
+        op['outcome'].update(station_id=station_id, speaker_id=speaker_id,
+                             listening_session=listening, target_volume=volume,
+                             radio_request_intent=intent)
+        if not submit_background_task(_execute_operation, playback.run_on, op, None, volume, None, 2, True, None, station_id):
             playback.finish(op, 'failed', 'worker_unavailable')
             return None
         return dict(op['outcome'])
+
+
+def _run_reserved_station_stop(ready: threading.Event,
+                               holder: dict[str, playback.Operation]) -> None:
+    ready.wait()
+    op = holder.get('operation')
+    if op is not None:
+        _execute_operation(playback.run_station_stop, op)
+
+
+def _run_reserved_relay_recovery(ready: threading.Event,
+                                 holder: dict[str, Any]) -> None:
+    ready.wait()
+    reserved = holder.get('recovery')
+    if reserved is not None:
+        from app.core import relay_playback
+        op, generation = reserved
+        _execute_operation(relay_playback.run_recovery, op, generation)
+
+
+def queue_relay_recovery(owner: str, ended: dict[str, Any]) -> bool:
+    """Reserve capacity before exposing a nonterminal recovery outcome."""
+    with _queue_lock:
+        if BACKGROUND_WORKER_POOL is None:
+            playback.relay_recovery_unavailable(owner)
+            return False
+        ready = threading.Event()
+        holder: dict[str, Any] = {}
+        if not submit_background_task(_run_reserved_relay_recovery, ready, holder):
+            playback.relay_recovery_unavailable(owner)
+            return False
+        try:
+            reserved = playback.begin_relay_recovery(owner, ended)
+            if reserved is None:
+                return False
+            holder['recovery'] = reserved
+            return True
+        finally:
+            ready.set()
+
+
+def queue_station_stop(speaker_name: str, speaker_id: str, station_id: str,
+                       operation_id: str) -> dict[str, Any] | None:
+    with _queue_lock:
+        if BACKGROUND_WORKER_POOL is None:
+            raise StationWorkerUnavailable
+        ready = threading.Event()
+        holder: dict[str, playback.Operation] = {}
+        if not submit_background_task(_run_reserved_station_stop, ready, holder):
+            raise StationWorkerUnavailable
+        try:
+            op = playback.begin_station_stop(speaker_name, speaker_id, station_id, operation_id)
+            if op is None:
+                return None
+            holder['operation'] = op
+            return dict(op['outcome'])
+        finally:
+            ready.set()
 
 
 def queue_direct_radio_test(speaker_name: str, speaker_id: str,
@@ -634,11 +721,15 @@ def queue_direct_radio_test(speaker_name: str, speaker_id: str,
     with _queue_lock:
         name = 'Direct radio test ' + station_id
         previous = playback.last(speaker_name)
-        if previous and not previous['terminal'] and previous['schedule_name'] == name:
-            return previous
+        pending = _pending_station_request(previous, station_id, speaker_id, 5, 'direct_test')
+        if pending is not None:
+            return pending
         if BACKGROUND_WORKER_POOL is None:
             return None
         op = playback.begin(speaker_name, name, speaker_id)
+        op['outcome'].update(station_id=station_id, speaker_id=speaker_id,
+                             listening_session=False, target_volume=5,
+                             radio_request_intent='direct_test')
         if not submit_background_task(_execute_operation, direct_radio.run, op, saved_url):
             playback.finish(op, 'failed', 'worker_unavailable')
             return None

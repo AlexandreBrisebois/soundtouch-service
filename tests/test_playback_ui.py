@@ -89,6 +89,51 @@ def test_outcome_labels_and_timezone_are_honest():
     """)
 
 
+def test_recovery_messages_are_honest_and_pending_listening_can_stop():
+    run_ui_checks(r"""
+      assert.match(operationSummary({state:'recovery_pending',recovery_state:'pending'}),
+                   /Recovery pending.*not confirmed/);
+      assert.match(operationSummary({state:'recovering',recovery_state:'recovering'}),
+                   /Attempting.*not confirmed/);
+      assert.match(operationSummary({state:'playing',recovery_state:'recovered'}),
+                   /reported recovered.*audibility not verified/);
+      assert.match(operationSummary({state:'unknown',recovery_state:'declined'}),
+                   /Recovery declined.*will not retry/);
+      assert.match(operationSummary({state:'unknown',recovery_state:'failed'}),
+                   /Recovery failed.*will not retry/);
+      assert.match(operationSummary({state:'unknown',reason:'radio_recovery_worker_unavailable',recovery_state:'failed'}),
+                   /worker unavailable/);
+      assert.match(operationSummary({state:'completed',reason:'radio_recovery_canceled_no_speaker_command',recovery_state:'canceled'}),
+                   /No speaker command was sent/);
+      const pending={operation_id:'one',station_id:'station',speaker_id:'ABC',
+                     listening_session:true,state:'recovery_pending',terminal:false};
+      renderOperation(pending);
+      assert.equal(element('btn-stop-radio').hidden,false);
+    """)
+
+
+def test_listening_stop_captures_owner_and_never_uses_power():
+    run_ui_checks(r"""
+      currentSpeaker='Room';refreshPlayback=()=>{};
+      latestOperation={operation_id:'one',station_id:'station',speaker_id:'ABC',listening_session:true,state:'playing',terminal:true};
+      renderOperation(latestOperation);
+      assert.equal(element('btn-stop-radio').hidden,false);
+      const calls=[];let finish;
+      fetch=async(url,opts)=>{calls.push({url,opts});return new Promise(resolve=>finish=resolve);};
+      const first=element('btn-stop-radio').listeners.click();
+      await element('btn-stop-radio').listeners.click();
+      assert.equal(calls.length,1);
+      assert.equal(calls[0].url,'/api/Room/stations/station/stop');
+      assert.deepEqual(JSON.parse(calls[0].opts.body),{speaker_id:'ABC',operation_id:'one'});
+      assert.doesNotMatch(calls[0].url,/power|test/);
+      currentSpeaker='Other';latestOperation={operation_id:'newer',state:'playing'};
+      finish({ok:true,json:async()=>({operation:{operation_id:'stop-one',state:'accepted'}})});
+      await first;assert.equal(latestOperation.operation_id,'newer');
+      renderOperation({state:'playing',listening_session:false});
+      assert.equal(element('btn-stop-radio').hidden,true);
+    """)
+
+
 def test_buffering_is_not_classified_as_playing_and_failure_is_not_standby():
     run_ui_checks(r"""
       element('hub-greeting').textContent = 'Good morning';
@@ -349,3 +394,21 @@ def test_schedule_save_surfaces_station_setup_error_without_losing_draft():
       assert.equal(element('f-station').value,'ici');
       assert.equal(element('schedule-preset').hidden,true);
     """)
+
+
+def test_hub_refresh_uses_bounded_rediscovery_and_rejects_departed_view():
+    run_ui_checks("""
+let seen=[];
+fetchWithTimeout=async(url,ms)=>{seen.push({url,ms}); return {ok:true,json:async()=>url.includes('discover')?[]:{}};};
+await element('btn-refresh').listeners.click();
+assert.equal(seen[0].url,'/api/discover?refresh=true');
+assert.equal(seen[0].ms,20000);
+let release;
+fetchWithTimeout=async(url)=>url.includes('discover') ? new Promise(resolve=>release=resolve) : {ok:true,json:async()=>({})};
+const pending=loadHub(true);
+showView('stations');
+release({ok:true,json:async()=>[{name:'Old speaker'}]});
+await pending;
+assert.equal(discoveredSpeakers.length,0);
+assert.equal(activeView,'stations');
+""")

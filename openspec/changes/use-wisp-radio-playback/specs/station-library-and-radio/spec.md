@@ -19,7 +19,7 @@ Wisp SHALL offer manual station Play and station-backed schedules without requir
 
 #### Scenario: Manual station playback is confirmed
 - **WHEN** the user confirms playback, readiness succeeds, and the operation is accepted
-- **THEN** Wisp uses target volume 5 and the standard ownership/cancellation guards without writing a physical preset
+- **THEN** Wisp uses the explicit listening volume defined by `add-everyday-radio-listening` and the standard ownership/cancellation guards without writing a physical preset; quiet diagnostic playback remains fixed at volume 5
 
 #### Scenario: Scheduled station starts
 - **WHEN** a due station-backed schedule passes readiness and starts playback

@@ -32,17 +32,17 @@ const ok=body=>({ok:true,json:async()=>body});
 let response=async()=>ok({stations:[]});
 let current='Living Room';
 const calls=[],capabilityReads=[],plays=[],schedules=[];
-let capabilities=async()=>ok({available:true,mode:'native',requires_wisp_running:true});let favoriteCleared=0;
+let capabilities=async()=>ok({available:true,mode:'native',requires_wisp_running:true,speaker_id:'ABC',volume:18});let favoriteCleared=0;
 let view='hub';
 const ui=api.create({document:doc,getSpeakers:()=>[{name:'Living Room'},{name:'Kitchen'}],getSpeaker:()=>current,
-fetch:async(url,opts)=>{if(url.endsWith('/readiness') || (url.endsWith('/direct-test') && !opts.method)){capabilityReads.push({url,opts});return capabilities(url,opts);} calls.push({url,opts});return response(url,opts);},
+fetch:async(url,opts)=>{if(url.endsWith('/listening-options') || url.endsWith('/readiness') || (url.endsWith('/direct-test') && !opts.method)){capabilityReads.push({url,opts});return capabilities(url,opts);} calls.push({url,opts});return response(url,opts);},
 navigate:name=>{view=name;ui.onViewChange(name);},back:name=>{view=name;ui.onViewChange(name);},
 schedule:(station,speaker)=>schedules.push({station,speaker}),clearFavorite:()=>favoriteCleared++,
 onPlay:(result,speaker,options)=>plays.push({result,speaker,options})});
 const station={id:'jazz',name:'Jazz <img>',url:'https://radio.example/jazz'};
 const descendants=item=>[item,...item.children.flatMap(descendants)];
 const action=(label,index=0)=>descendants(el('stations-list').children[index]).find(child=>child.textContent===label);
-const clickAction=label=>{if(label!=='Schedule…')action('⋯').listeners.click();return action(label).listeners.click();};
+const clickAction=label=>{if(!['Schedule…','Play…'].includes(label))action('⋯').listeners.click();return action(label).listeners.click();};
 const key=(element,key)=>element.listeners.keydown({key,preventDefault(){},stopPropagation(){}});
 '''
     script = harness + '\n(async()=>{\n' + body + '\n})().catch(e=>{console.error(e);process.exitCode=1;});'
@@ -98,9 +98,89 @@ await ui.confirm();assert.equal(calls.length,1);
 await clickAction('Test playback…');
 response=async()=>ok({state:'accepted',operation:{state:'accepted'}});
 await ui.confirm();await ui.confirm();
-assert.equal(calls.length,2);assert.equal(calls[1].url,'/api/Kitchen/stations/jazz/play');
+assert.equal(calls.length,2);assert.equal(calls[1].url,'/api/Kitchen/stations/jazz/test');
 assert.deepEqual(JSON.parse(calls[1].opts.body),{confirmed:true});
 assert.match(el('stations-message').textContent,/not proof/);assert.equal(plays.length,1);
+''')
+
+
+def test_primary_play_is_visible_and_uses_normal_station_playback():
+    checks('''
+response=async()=>ok({stations:[station]});await ui.open();
+assert.equal(action('Play…').disabled,false);
+assert.equal(action('Play…').attrs.role,undefined);
+assert.equal(action('⋯').attrs['aria-expanded'],'false');
+await clickAction('Play…');
+assert.equal(calls.length,1);assert.equal(capabilityReads.length,1);
+assert.equal(el('stations-direct-risk').hidden,true);
+assert.match(el('stations-confirm-text').textContent,/Living Room/);
+assert.equal(el('stations-volume').value,'18');
+assert.equal(el('stations-confirm').textContent,'Play radio');
+assert.doesNotMatch(el('stations-confirm-text').textContent,/volume 5|diagnostic|test/i);
+el('stations-volume').value='27';el('stations-volume').listeners.input();
+response=async()=>ok({state:'accepted'});await ui.confirm();await ui.confirm();
+assert.equal(calls.length,2);assert.equal(calls[1].url,'/api/Living%20Room/stations/jazz/play');
+assert.deepEqual(JSON.parse(calls[1].opts.body),{confirmed:true,volume:27,speaker_id:'ABC'});
+assert.equal(plays[0].options.direct,false);
+''')
+
+
+def test_primary_play_never_falls_back_to_a_diagnostic():
+    checks('''
+response=async()=>ok({stations:[station]});await ui.open();
+capabilities=async()=>ok({available:false,reason:'Configure WISP_BASE_URL'});
+await clickAction('Play…');await ui.confirm();
+assert.equal(capabilityReads.length,1);assert.equal(calls.length,1);
+assert.equal(el('stations-confirmation').hidden,true);
+assert.match(el('stations-message').textContent,/Configure WISP_BASE_URL/);
+assert.match(el('stations-message').textContent,/No playback request was sent/);
+''')
+
+
+def test_listening_volume_must_be_chosen_if_fresh_read_is_unavailable():
+    checks('''
+response=async()=>ok({stations:[station]});await ui.open();
+capabilities=async()=>ok({available:true,speaker_id:'ABC',volume:null});
+await clickAction('Play…');
+assert.equal(el('stations-volume').value,'');
+assert.equal(el('stations-confirm').disabled,true);
+assert.match(el('stations-volume-help').textContent,/Choose your listening volume/);
+for(const invalid of ['', '-1','101','2.5']) {
+ el('stations-volume').value=invalid;el('stations-volume').listeners.input();
+ await ui.confirm();assert.equal(calls.length,1);
+}
+el('stations-volume').value='0';el('stations-volume').listeners.input();
+response=async()=>ok({state:'accepted'});await ui.confirm();
+assert.deepEqual(JSON.parse(calls[1].opts.body),{confirmed:true,volume:0,speaker_id:'ABC'});
+''')
+
+
+def test_stale_listening_options_cannot_authorize_new_speaker_or_navigation():
+    checks('''
+response=async()=>ok({stations:[station]});await ui.open();
+let finish;capabilities=()=>new Promise(resolve=>finish=resolve);
+const pending=clickAction('Play…');
+el('stations-speaker').value='Kitchen';el('stations-speaker').listeners.change();
+finish(ok({available:true,speaker_id:'OLD',volume:80}));await pending;
+assert.equal(el('stations-confirmation').hidden,true);
+assert.equal(capabilityReads[0].opts.signal.aborted,true);
+const next=clickAction('Play…');ui.close();
+finish(ok({available:true,speaker_id:'NEW',volume:20}));await next;await ui.confirm();
+assert.equal(calls.length,1);
+''')
+
+
+def test_primary_play_resets_selection_and_needs_a_speaker():
+    checks('''
+current=null;response=async()=>ok({stations:[station]});await ui.open();
+assert.equal(action('Play…').disabled,true);
+el('stations-speaker').value='Kitchen';el('stations-speaker').listeners.change();
+await clickAction('Play…');
+assert.match(el('stations-confirm-text').textContent,/Kitchen/);
+el('stations-speaker').value='Living Room';el('stations-speaker').listeners.change();
+await ui.confirm();assert.equal(calls.length,1);
+await clickAction('Play…');response=async()=>ok({state:'accepted'});await ui.confirm();
+assert.equal(calls[1].url,'/api/Living%20Room/stations/jazz/play');
 ''')
 
 
@@ -304,7 +384,7 @@ assert.equal(capabilityReads.length,1);
 assert.equal(el('stations-direct-risk').hidden,true);
 assert.equal(el('stations-confirm').disabled,false);
 response=async()=>ok({state:'accepted'}); await ui.confirm();
-assert.equal(calls[1].url,'/api/Living%20Room/stations/jazz/play');
+assert.equal(calls[1].url,'/api/Living%20Room/stations/jazz/test');
 assert.deepEqual(JSON.parse(calls[1].opts.body),{confirmed:true});
 ''')
 
@@ -351,7 +431,7 @@ assert.equal(el('stations-direct-risk').hidden,true);
 assert.match(el('stations-confirm-text').textContent,/requires an idle speaker/);
 assert.match(el('stations-confirm-text').textContent,/Wisp must remain running/);
 response=async()=>ok({state:'accepted'}); await ui.confirm();
-assert.match(calls[1].url,/\/play$/);
+assert.match(calls[1].url,/\/test$/);
 assert.deepEqual(JSON.parse(calls[1].opts.body),{confirmed:true});
 ''')
 

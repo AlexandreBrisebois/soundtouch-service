@@ -70,16 +70,13 @@ speaker invalidates the old operation: its later volume or Stop must not act on
 the new station. Names resolving to the same device share ownership. No zones
 are created or dissolved.
 
-For a future Wisp relay, use a separate opaque stream-session URL per device and
+The Wisp relay uses a separate opaque stream-session URL per device and
 operation, independent upstream connection, cancellation token and bounded
-buffer. Stopping one session must close only its upstream/downstream resources.
-Do not use a mutable global "current station" or share one iterator between
-speakers. Even two speakers playing the same station need independent consumers;
-sharing upstream audio is a later optimization, not a correctness dependency.
-Gate **all audio bytes** until both actual and target volume are verified for the
-current owner after SetURI. HTTPS MP3 forwarding and HLS/transcoding are separate
-capabilities; this change implements neither. The earlier relay experiment timed
-out, so sustained relay operation is not qualified.
+buffer. Stopping one session closes only its upstream/downstream resources. Two
+speakers, including two playing the same station, have independent consumers.
+All audio bytes remain gated until both actual and target volume are verified
+for the current owner. Sustained and multi-speaker relay operation still require
+supervised hardware qualification.
 
 ## Physical buttons: still a separate hardware gate
 
@@ -132,9 +129,24 @@ Wisp-hosted, per-speaker MP3 stream:
 Every speaker has its own upstream, token, volume gate and lifetime—even when two
 speakers select the same station. Stopping one does not stop another. Eight MP3
 sessions are allowed per process; ICI conversion has an additional two-converter
-limit. There is no reconnect/retry or shared player. An automatic ON encountering
-an active Wisp radio lease leaves it alone. Quiet manual tests require an idle
-speaker; stop current audio first.
+limit. An automatic ON encountering an active Wisp radio lease leaves it alone.
+Quiet manual tests require an idle speaker; stop current audio first.
+
+After an exact current relay has reached speaker-reported Playing, a speaker
+client disconnect may reserve one short-lived recovery attempt for that same
+in-memory operation. Recovery first requires fresh matching device identity,
+saved station URL, prior Wisp TrackURI/UPNP source, solo zone, and original
+actual/target volume. It then confirms both volume values at zero **before**
+selecting a new peer-bound relay URI, and keeps audio gated until the intended
+speaker connects at zero. A second disconnect is not retried. Stop/OFF,
+replacement, manual control, takeover, expiry, shutdown, and process restart
+invalidate recovery; no grant is persisted or resumed.
+
+This is AVTransport recovery qualified by tests and, separately, supervised
+speaker observations. The official Bose Web API reference does not specify URI
+repush or lost-stream reconnection, and reported Playing does not prove audible
+sound. Wisp never uses POWER for relay recovery, never restores volume after
+ambiguous evidence, and does not expose a generic SoundTouch control proxy.
 
 Set `WISP_BASE_URL=http://<container-host-LAN-address>:9001` to the stable address
 reachable **from the speakers**, not localhost or a browser-only hostname. Wisp

@@ -36,6 +36,7 @@
     function clearConfirmation(restoreFocus = false) {
       testGeneration += 1; if (testController) testController.abort();
       el('stations-direct-risk').hidden = true; el('stations-accept-risk').checked = false;
+      el('stations-listening-volume').hidden = true;
       const previous = confirmation; confirmation = null; el('stations-confirmation').hidden = true;
       if (restoreFocus && previous && previous.trigger && previous.trigger.isConnected) previous.trigger.focus();
     }
@@ -44,6 +45,7 @@
       el('stations-refresh').disabled = writing;
       el('stations-speaker').disabled = writing;
       el('stations-confirm').disabled = writing || (confirmation?.kind === 'direct' && !el('stations-accept-risk').checked);
+      if (confirmation?.kind === 'listen') el('stations-confirm').disabled = writing || listeningVolume() === null;
       el('stations-add-form').setAttribute('aria-busy', String(writing));
       render();
     }
@@ -65,6 +67,7 @@
         card.append(node('h3', station.name), node('p', station.url, 'preset-help'));
         const speaker = el('stations-speaker').value;
         const actions = node('div', '', 'station-actions');
+        actions.append(button('Play…', () => prompt('play', station), writing || !speaker));
         actions.append(button('Schedule…', () => {
           if (!active || writing || !el('stations-speaker').value) return;
           closeMenu();
@@ -95,7 +98,7 @@
           menu.append(item); return item;
         }
         const items = [
-          menuItem('Test playback…', () => prompt('play', station), writing || !speaker),
+          menuItem('Test playback…', () => prompt('test', station), writing || !speaker),
           menuItem('Remove…', () => prompt('remove', station), writing),
         ];
         function showMenu(last = false) {
@@ -130,14 +133,50 @@
     doc.addEventListener('focusin', event => {
       if (openMenu && !openMenu.wrapper.contains(event.target)) closeMenu();
     });
+    function listeningVolume() {
+      const raw = el('stations-volume').value;
+      const value = Number(raw);
+      return raw !== '' && Number.isInteger(value) && value >= 0 && value <= 100 ? value : null;
+    }
+    async function listen(station) {
+      if (!active || writing) return;
+      const speaker = el('stations-speaker').value;
+      if (!speaker) return;
+      const trigger = doc.activeElement;
+      clearConfirmation();
+      const ticket = ++testGeneration;
+      testController = new AbortController();
+      const fresh = () => active && ticket === testGeneration && speaker === el('stations-speaker').value;
+      message(`Checking ${speaker} for “${station.name}”…`);
+      try {
+        const options = await request(`/api/${encodeURIComponent(speaker)}/stations/${encodeURIComponent(station.id)}/listening-options`, {signal:testController.signal});
+        if (!fresh()) return;
+        if (options.available !== true || !options.speaker_id) {
+          message(`${options.reason || 'Playback options could not be verified.'} No playback request was sent.`); return;
+        }
+        confirmation = {kind:'listen', station:{...station}, speaker, speaker_id:options.speaker_id, trigger};
+        const volume = options.volume;
+        el('stations-volume').value = Number.isInteger(volume) && volume >= 0 && volume <= 100 ? String(volume) : '';
+        el('stations-volume-help').textContent = el('stations-volume').value === ''
+          ? 'Current volume could not be read. Choose your listening volume.' : 'Current speaker volume. Adjust it before playing.';
+        el('stations-confirm-text').textContent = `Play “${station.name}” on ${speaker}. ${options.requires_idle ? 'Stop current audio first. ' : 'This may replace current audio. '}${options.requires_wisp_running ? 'Keep Wisp running. ' : ''}Radio continues until stopped or the stream ends.`;
+        el('stations-listening-volume').hidden = false;
+        el('stations-confirm').textContent = 'Play radio';
+        el('stations-confirm').disabled = listeningVolume() === null;
+        el('stations-confirmation').hidden = false;
+        message('Choose your listening volume, then Play radio.');
+        el('stations-volume').focus();
+      } catch (error) { if (fresh()) message(`${error.message} No playback request was sent.`); }
+    }
     async function prompt(kind, station) {
+      if (kind === 'play') return listen(station);
       if (writing || !active) return;
       const speaker = el('stations-speaker').value;
-      if (kind === 'play' && !speaker) return;
+      if (kind === 'test' && !speaker) return;
       const trigger = doc.activeElement;
       clearConfirmation();
       let directInfo = null, readiness = null;
-      if (kind === 'play') {
+      if (kind === 'test') {
         const ticket = ++testGeneration;
         testController = new AbortController();
         const fresh = () => active && ticket === testGeneration && speaker === el('stations-speaker').value;
@@ -156,15 +195,16 @@
             }
             kind = 'direct';
           }
+          if (kind === 'test') kind = 'quiet';
         } catch (error) { if (fresh()) message(`${error.message} No playback request was sent.`); return; }
       }
       confirmation = {kind, station: {...station}, speaker, trigger};
       el('stations-confirm-text').textContent = kind === 'direct'
         ? `Experimental test of “${station.name}” on ${speaker}. Audio may start at the speaker’s remembered volume before Wisp can lower it to 5. Keep physical Stop within reach. Wisp attempts to stop after 10 seconds; closing the app does not stop direct radio. Stop other controllers and schedules first. This does not enable speaker buttons or scheduled radio.`
-        : kind === 'play'
-        ? `Play “${station.name}” on ${speaker} at volume 5? ${readiness?.requires_idle ? 'Stop current audio first; this test requires an idle speaker. Wisp must remain running.' : 'This can replace current audio.'} A listening check is still needed; acceptance does not confirm sound.`
+        : kind === 'quiet'
+        ? `Test “${station.name}” on ${speaker} at volume 5? ${readiness?.requires_idle ? 'Stop current audio first; playback requires an idle speaker. Wisp must remain running.' : 'This can replace current audio.'} Listen to check this station. Acceptance does not confirm sound.`
         : `Remove “${station.name}” from your station library? Existing presets, schedules and audio already playing stay intact. Station metadata is retained privately for existing playback and presets. You can add the stream again later.`;
-      el('stations-confirm').textContent = kind === 'direct' ? 'Run experimental 10-second test' : kind === 'play' ? 'Play at volume 5' : 'Remove station';
+      el('stations-confirm').textContent = kind === 'direct' ? 'Run experimental 10-second test' : kind === 'quiet' ? 'Test at volume 5' : 'Remove station';
       el('stations-direct-risk').hidden = kind !== 'direct';
       el('stations-confirm').disabled = kind === 'direct';
       el('stations-confirmation').hidden = false;
@@ -226,16 +266,21 @@
     async function confirm() {
       if (!confirmation || writing || !active) return;
       if (confirmation.kind === 'direct' && !el('stations-accept-risk').checked) return;
+      if (confirmation.kind === 'listen' && listeningVolume() === null) return;
+      if (confirmation.kind === 'listen') confirmation.volume = listeningVolume();
       const chosen = confirmation; clearConfirmation();
       const ticket = ++generation; if (controller) controller.abort();
       writing = true; setBusy();
       try {
         const path = chosen.kind === 'direct'
           ? `/api/${encodeURIComponent(chosen.speaker)}/stations/${encodeURIComponent(chosen.station.id)}/direct-test`
-          : chosen.kind === 'play'
+          : chosen.kind === 'listen'
           ? `/api/${encodeURIComponent(chosen.speaker)}/stations/${encodeURIComponent(chosen.station.id)}/play`
+          : chosen.kind === 'quiet'
+          ? `/api/${encodeURIComponent(chosen.speaker)}/stations/${encodeURIComponent(chosen.station.id)}/test`
           : `/api/stations/${encodeURIComponent(chosen.station.id)}`;
-        const options = post(chosen.kind === 'direct' ? {confirmed: true, accept_startup_volume_risk: true} : {confirmed: true}); if (chosen.kind === 'remove') options.method = 'DELETE';
+        const options = post(chosen.kind === 'listen' ? {confirmed:true, volume:chosen.volume, speaker_id:chosen.speaker_id}
+          : chosen.kind === 'direct' ? {confirmed: true, accept_startup_volume_risk: true} : {confirmed: true}); if (chosen.kind === 'remove') options.method = 'DELETE';
         // Writes deliberately survive navigation and are never retried automatically.
         const result = await request(path, options);
         if (!active || ticket !== generation) return;
@@ -243,8 +288,8 @@
           stations = stations.filter(station => station.id !== chosen.station.id); render();
           message('Station removed from the library. Existing presets, schedules and current audio stay intact.');
         } else {
-          message(chosen.kind === 'direct' ? 'Experimental test requested, not confirmed playing. Keep physical Stop within reach; closing this page does not stop radio.' : 'Quiet playback requested. Listen to confirm sound; acceptance is not proof of playback.');
-          deps.onPlay(result, chosen.speaker, {direct: chosen.kind === 'direct'});
+          message(chosen.kind === 'direct' ? 'Experimental test requested, not confirmed playing. Keep physical Stop within reach; closing this page does not stop radio.' : chosen.kind === 'listen' ? 'Radio requested. Waiting for speaker confirmation.' : 'Quiet playback requested. Listen to confirm sound; acceptance is not proof of playback.');
+          deps.onPlay(result, chosen.speaker, {direct: chosen.kind === 'direct', listening:chosen.kind === 'listen'});
         }
       } catch (error) {
         if (active && ticket === generation) message(`${error.message} ${chosen.kind !== 'remove' ? 'Playback may have started. Check the speaker before retrying.' : 'Removal may have completed. Refresh before retrying.'}`);
@@ -301,6 +346,9 @@
     el('stations-speaker').addEventListener('change', () => { clearConfirmation(); render(); });
     el('stations-add-form').addEventListener('submit', add);
     el('stations-confirm').addEventListener('click', confirm);
+    el('stations-volume').addEventListener('input', () => {
+      if (confirmation?.kind === 'listen') el('stations-confirm').disabled = writing || listeningVolume() === null;
+    });
     el('stations-accept-risk').addEventListener('change', () => {
       el('stations-confirm').disabled = writing || (confirmation?.kind === 'direct' && !el('stations-accept-risk').checked);
     });

@@ -11,6 +11,7 @@ from typing import Any, Callable, TypedDict
 from app.core import control, discovery, status
 
 START_DEADLINE_SECONDS = 30.0
+RECOVERY_DEADLINE_SECONDS = 15.0
 MAX_FADE_SECONDS = 3600.0
 TERMINAL = {'completed', 'playing', 'failed', 'unknown', 'skipped', 'canceled'}
 
@@ -29,6 +30,7 @@ class Operation(TypedDict):
     verified: bool
     pending_volume: int | None
     radio_idle: dict[str, Any] | None
+    recovery: dict[str, Any] | None
 
 
 _lock = threading.RLock()
@@ -125,7 +127,7 @@ def begin(speaker: str, schedule_name: str | None = None,
             'expected': None, 'expected_volume': None,
             'deadline': time.monotonic() + START_DEADLINE_SECONDS,
             'mode': 'on', 'initial_state': '', 'verified': False, 'pending_volume': None,
-            'radio_idle': idle,
+            'radio_idle': idle, 'recovery': None,
             'outcome': {'operation_id': uuid.uuid4().hex, 'schedule_name': schedule_name,
                         'state': 'accepted', 'reason': 'queued', 'accepted_at': now,
                         'updated_at': now, 'observed_at': None, 'terminal': False,
@@ -142,6 +144,19 @@ def begin_radio_off(speaker: str, schedule_name: str | None, device_id: str | No
     """Never let a stale routine's OFF stop a later routine or manual session."""
     from app.core import radio_relay
     with _lock:
+        previous = _operations.get(speaker)
+        if (previous is not None and current(previous) and previous['recovery'] is not None
+                and previous['outcome']['state'] in {'playing', 'recovery_pending', 'recovering'}
+                and previous['device_id'] == (device_id or previous['device_id'])
+                and previous['outcome'].get('station_id') == station_id
+                and previous['outcome'].get('schedule_name') == schedule_name):
+            old_id = previous['outcome']['operation_id']
+            op = begin(speaker, schedule_name, device_id)
+            op['mode'] = 'recovery_cancel'
+            op['outcome'].update(
+                station_id=station_id, speaker_id=device_id, radio_mode='relay',
+                recovery_state='canceled', stops_operation_id=old_id)
+            return op
         session = radio_relay.for_device(device_id or _bindings.get(speaker))
         if session is not None:
             if session['station_id'] != station_id or session['schedule_name'] != schedule_name:
@@ -168,6 +183,94 @@ def begin_nonradio_schedule_off(speaker: str, schedule_name: str, device_id: str
         return begin(speaker, schedule_name, device_id)
 
 
+def begin_station_stop(speaker: str, device_id: str, station_id: str,
+                       operation_id: str) -> Operation | None:
+    """Compare the exact listening owner before transferring any ownership."""
+    from app.core import radio_relay
+    with _lock:
+        previous = _operations.get(speaker)
+        if (previous is not None and current(previous) and previous['recovery'] is not None
+                and previous['outcome']['state'] in {'playing', 'recovery_pending', 'recovering'}
+                and previous['device_id'] == device_id
+                and previous['outcome'].get('operation_id') == operation_id
+                and previous['outcome'].get('station_id') == station_id
+                and previous['outcome'].get('listening_session') is True):
+            op = begin(speaker, previous['outcome']['schedule_name'], device_id)
+            op['mode'] = 'recovery_cancel'
+            op['outcome'].update(
+                station_id=station_id, speaker_id=device_id, listening_session=True,
+                radio_mode='relay', recovery_state='canceled',
+                stops_operation_id=operation_id)
+            return op
+        if (previous is None or not current(previous) or previous['device_id'] != device_id
+                or previous['outcome'].get('operation_id') != operation_id
+                or previous['outcome'].get('station_id') != station_id
+                or previous['outcome'].get('listening_session') is not True
+                or previous['outcome']['state'] != 'playing'):
+            return None
+        mode = previous['outcome'].get('radio_mode')
+        session = radio_relay.for_device(device_id)
+        if mode == 'relay':
+            if session is None or session['owner'] != operation_id or session['station_id'] != station_id:
+                return None
+        elif mode != 'native' or session is not None or not previous['expected']:
+            return None
+        expected = previous['expected']
+        op = begin(speaker, previous['outcome']['schedule_name'], device_id, preserve_radio=True)
+        op['expected'] = expected
+        op['mode'] = 'listening_stop'
+        op['outcome'].update(station_id=station_id, speaker_id=device_id,
+                             listening_session=True, radio_mode=mode, stops_operation_id=operation_id)
+        return op
+
+
+def run_station_stop(op: Operation) -> None:
+    """Explicit radio STOP, never the generic power-toggle OFF path."""
+    if not current(op):
+        return
+    if op['mode'] == 'recovery_cancel':
+        finish(op, 'completed', 'radio_recovery_canceled_no_speaker_command')
+        return
+    finish(op, 'starting', 'stopping_radio')
+    if _resolve(op) is None:
+        return
+    from app.core import radio_relay, relay_playback
+    session = radio_relay.for_device(op['device_id'])
+    if op['outcome'].get('radio_mode') == 'relay':
+        if session is None or session['owner'] != op['outcome']['operation_id']:
+            finish(op, 'canceled', 'radio_session_no_longer_owned')
+            return
+        relay_playback.run_off(op, session, 0)
+        return
+    data = _read(op)
+    if data is None:
+        return
+    if not matches(op['expected'] or {}, data):
+        finish(op, 'canceled', 'radio_station_changed')
+        return
+    ip = _address(op)
+    if ip is None:
+        return
+    volume = status.get_volume(ip, timeout=_budget(op))
+    if volume is None:
+        finish(op, 'unknown', 'volume_observation_unavailable')
+        return
+    op['initial_state'] = data.get('status', '').upper()
+    op['expected_volume'], op['verified'] = volume, True
+    if not _guard(op):
+        return
+    if not _write(op, lambda address: _guard(op) and control.stop_action(address, timeout=_budget(op, 3))):
+        return
+    after = _read(op)
+    if after is None:
+        return
+    stopped = after.get('status', '').upper() in {'STOPPED', 'STANDBY'}
+    if stopped and (after.get('source_type') == 'STANDBY' or matches(op['expected'] or {}, after)):
+        finish(op, 'completed', 'radio_stopped_verified', after.get('observed_at'))
+    else:
+        finish(op, 'unknown', 'radio_stop_readback_unknown')
+
+
 def has_radio(speaker: str, device_id: str | None = None) -> bool:
     from app.core import radio_relay
     with _lock:
@@ -179,15 +282,181 @@ def has_radio(speaker: str, device_id: str | None = None) -> bool:
         return radio_relay.for_device(identity) is not None or native
 
 
-def relay_ended(owner: str, reason: str) -> None:
+def begin_relay_recovery(owner: str, ended: dict[str, Any]) -> tuple[Operation, str] | None:
+    """Create one volatile grant only after a recovery worker is reserved."""
+    with _lock:
+        op = next((candidate for candidate in _operations.values()
+                   if candidate['outcome']['operation_id'] == owner and current(candidate)), None)
+        candidate = op['recovery'] if op is not None else None
+        if (op is not None and candidate is not None and candidate.get('phase') == 'candidate'
+                and time.monotonic() >= candidate.get('expires_at', 0)):
+            op['recovery'] = None
+            op['outcome'].update(
+                state='unknown', reason='radio_recovery_expired', terminal=True,
+                relay_active=False, recovery_state='declined',
+                recovery_reason='radio_recovery_expired', recovery_attempts=0,
+                updated_at=time.time())
+            op['changed'].set()
+            return None
+        if (op is None or op['outcome']['state'] != 'playing'
+                or op['outcome'].get('radio_mode') != 'relay'
+                or op['outcome'].get('recovery_attempts', 0) != 0
+                or candidate is None or candidate.get('phase') != 'candidate'
+                or op['device_id'] != ended.get('device_id')
+                or op['outcome'].get('station_id') != ended.get('station_id')
+                or op['outcome'].get('schedule_name') != ended.get('schedule_name')
+                or not isinstance(ended.get('saved_url'), str)
+                or not isinstance(ended.get('url'), str)):
+            return None
+        target = op['outcome'].get('target_volume', op['expected_volume'])
+        if not isinstance(target, int) or not 0 <= target <= 100:
+            return None
+        generation = uuid.uuid4().hex
+        op['recovery'] = {
+            'phase': 'granted',
+            'generation': generation, 'operation_id': owner,
+            'device_id': ended['device_id'], 'speaker_ip': ended.get('speaker_ip'),
+            'station_id': ended['station_id'], 'schedule_name': ended.get('schedule_name'),
+            'saved_url': ended['saved_url'], 'prior_url': ended['url'],
+            'target_volume': target,
+            'fade_duration': op['outcome'].get('fade_in_duration', 0),
+            'expires_at': time.monotonic() + RECOVERY_DEADLINE_SECONDS,
+        }
+        op['verified'] = False
+        op['outcome'].update(
+            state='recovery_pending', reason='radio_client_disconnected', terminal=False,
+            relay_active=False, recovery_state='pending', recovery_reason='radio_client_disconnected',
+            recovery_attempts=1, updated_at=time.time(), audible_confirmed=False)
+        op['changed'].set()
+        return op, generation
+
+
+def recovery_grant(op: Operation, generation: str, *, claim: bool = False) -> dict[str, Any] | None:
+    """Return a copy only while this exact volatile generation remains current."""
+    with _lock:
+        grant = op['recovery']
+        if (not current(op) or grant is None or grant.get('generation') != generation):
+            return None
+        if time.monotonic() >= grant['expires_at']:
+            op['recovery'] = None
+            op['outcome'].update(state='unknown', reason='radio_recovery_expired', terminal=True,
+                                 recovery_state='declined', recovery_reason='radio_recovery_expired',
+                                 updated_at=time.time())
+            op['changed'].set()
+            return None
+        if claim:
+            if not grant.get('claimed'):
+                grant['claimed'] = True
+                grant['expires_at'] = (time.monotonic()
+                                       + min(MAX_FADE_SECONDS, max(0, grant['fade_duration']))
+                                       + 60.0)
+            op['outcome'].update(state='recovering', reason='radio_recovery_started',
+                                 recovery_state='recovering', recovery_reason='radio_recovery_started',
+                                 updated_at=time.time())
+            op['changed'].set()
+        return dict(grant)
+
+
+def end_recovery(op: Operation, generation: str, reason: str,
+                 *, recovery_state: str = 'failed') -> None:
+    with _lock:
+        grant = op['recovery']
+        if not current(op) or grant is None or grant.get('generation') != generation:
+            return
+        op['recovery'] = None
+        op['outcome'].update(state='unknown', reason=reason, terminal=True,
+                             recovery_state=recovery_state, recovery_reason=reason,
+                             relay_active=False, updated_at=time.time())
+        op['changed'].set()
+
+
+def complete_recovery(op: Operation, generation: str) -> None:
+    with _lock:
+        grant = op['recovery']
+        if (not current(op) or grant is None or grant.get('generation') != generation):
+            return
+        from app.core import radio_relay
+        session = radio_relay.for_device(op['device_id'])
+        if (session is None or session['owner'] != op['outcome']['operation_id']
+                or session['station_id'] != grant['station_id']):
+            op['recovery'] = None
+            op['outcome'].update(
+                state='unknown', reason='radio_recovery_session_ended_before_commit',
+                terminal=True, relay_active=False, recovery_state='failed',
+                recovery_reason='radio_recovery_session_ended_before_commit',
+                updated_at=time.time())
+            op['changed'].set()
+            return
+        op['recovery'] = None
+        op['verified'] = False
+        op['expected_volume'] = grant['target_volume']
+        op['outcome'].update(
+            state='playing', reason='radio_relay_recovered', terminal=True,
+            relay_active=True, physical_stop_may_be_needed=True,
+            recovery_state='recovered', recovery_reason='radio_relay_recovered',
+            recovered_at=time.time(), updated_at=time.time(), audible_confirmed=False)
+        op['changed'].set()
+
+
+def release_recovery_gate(op: Operation, generation: str, session: Any) -> bool:
+    """Linearize grant validation and gate release against Stop/replacement."""
+    from app.core import radio_relay
+    with _lock:
+        grant = op['recovery']
+        if (not current(op) or grant is None or grant.get('generation') != generation
+                or time.monotonic() >= grant['expires_at']
+                or session['owner'] != op['outcome']['operation_id']):
+            return False
+        return radio_relay.release(session, op['outcome']['operation_id'])
+
+
+def relay_recovery_unavailable(owner: str) -> None:
+    with _lock:
+        op = next((candidate for candidate in _operations.values()
+                   if candidate['outcome']['operation_id'] == owner and current(candidate)), None)
+        if op is None or op['outcome']['state'] != 'playing':
+            return
+        op['recovery'] = None
+        op['outcome'].update(state='unknown', reason='radio_recovery_worker_unavailable',
+                             terminal=True, relay_active=False, recovery_state='failed',
+                             recovery_reason='radio_recovery_worker_unavailable',
+                             recovery_attempts=0, updated_at=time.time())
+        op['changed'].set()
+
+
+def relay_ended(owner: str, reason: str, ended: dict[str, Any] | None = None) -> None:
     """A live audio feed ending invalidates a previous terminal Playing outcome."""
+    eligible = False
     with _lock:
         for op in _operations.values():
             if op['outcome']['operation_id'] == owner and current(op):
+                if op['mode'] == 'relay_stop':
+                    op['changed'].set()
+                    return
+                eligible = (reason == 'radio_client_disconnected' and ended is not None
+                            and op['outcome']['state'] == 'playing'
+                            and op['outcome'].get('radio_mode') == 'relay'
+                            and op['outcome'].get('recovery_attempts', 0) == 0)
+                if eligible and ended is not None:
+                    op['recovery'] = {
+                        'phase': 'candidate', 'expires_at': time.monotonic() + RECOVERY_DEADLINE_SECONDS,
+                        **ended,
+                    }
+                    break
+                recovering = op['outcome']['state'] in {'recovery_pending', 'recovering'}
+                if recovering or op['recovery'] is not None:
+                    op['recovery'] = None
                 op['outcome'].update(state='unknown', reason=reason, terminal=True,
-                                     updated_at=time.time(), relay_active=False)
+                                     updated_at=time.time(), relay_active=False,
+                                     **({'recovery_state': 'failed', 'recovery_reason': reason}
+                                        if recovering else {}))
                 op['changed'].set()
                 return
+        else:
+            return
+    if eligible:
+        from app.scheduler import jobs
+        jobs.queue_relay_recovery(owner, ended or {})
 
 
 def record_radio_idle(op: Operation, observed: dict[str, Any]) -> None:
@@ -551,6 +820,9 @@ def run_on(op: Operation, preset: int | None, volume: int, source: str | None = 
 def run_off(op: Operation, fade_out_duration: float = 60) -> None:
     """Preserve existing OFF semantics, but never act after detected takeover."""
     if not current(op):
+        return
+    if op['mode'] == 'recovery_cancel':
+        finish(op, 'completed', 'radio_recovery_canceled_no_speaker_command')
         return
     protected_station = op['mode'] == 'native_station_off'
     op['mode'] = 'off'

@@ -212,7 +212,7 @@ manual priority, optional stable speaker IDs, failure behavior and remaining har
 
 Keep an independent Stations library with Add, Play, Schedule, and Remove actions. Wisp starts radio for the selected speaker or schedule without consuming or rewriting one of the six physical buttons. Native preset assignment remains available only for playable NAS folders or playlists already registered on the speaker, with preview and confirmation before a button changes. Existing speaker presets and legacy radio-favorite records are left intact. Hardware qualification is still required; an accepted request or readback does not prove audible playback. See [setup, safety and qualification](docs/native-presets.md) before changing an existing NAS button.
 
-The bundled `app/data/stations.seed.json` adds CHOM, Énergie Montréal, CBC Radio One Montréal, The Buzz, ICI Première Montréal and Star 92.9 to the library once, including on upgrade. Existing entries and deletions are preserved; playback, presets and schedules do not change. These streams still need testing on your speakers. See [seed behavior](docs/native-presets.md#starter-stations).
+The bundled `app/data/stations.seed.json` adds CHOM, Énergie Montréal, CBC Radio One Montréal, ICI Première Montréal and Star 92.9 to the library once, including on upgrade. Existing entries and deletions are preserved; playback, presets and schedules do not change. These streams still need testing on your speakers. See [seed behavior](docs/native-presets.md#starter-stations).
 
 ### Local container testing
 

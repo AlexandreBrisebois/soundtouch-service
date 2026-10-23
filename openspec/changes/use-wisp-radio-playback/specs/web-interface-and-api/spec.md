@@ -11,7 +11,19 @@ The UI SHALL expose station-library and native NAS-preset workflows as separate 
 
 #### Scenario: User opens station actions
 - **WHEN** a speaker and saved station are selected
-- **THEN** the UI offers Play and Schedule without displaying an Assign to speaker button action
+- **THEN** the station card exposes visible Play and Schedule buttons, and Play presents the selected station, speaker, and explicit listening volume as defined by `add-everyday-radio-listening` before requesting normal playback
+
+#### Scenario: Everyday Play is unavailable
+- **WHEN** the user chooses Play and readiness is unavailable or cannot be confirmed
+- **THEN** the UI explains the failure without submitting playback or substituting an experimental direct test
+
+#### Scenario: User changes speaker before confirming Play
+- **WHEN** the selected speaker changes after opening the Play confirmation
+- **THEN** the confirmation is invalidated and cannot start playback on either speaker until the user makes a fresh selection and confirmation
+
+#### Scenario: Diagnostic remains separately available
+- **WHEN** the user opens the station overflow menu
+- **THEN** Test playback remains separately labelled and any experimental direct test retains its risk consent and ten-second limit; ordinary Play does not use that diagnostic path
 
 #### Scenario: User selects station Schedule
 - **WHEN** the station action opens the schedule editor

@@ -356,6 +356,26 @@ def test_outcome_and_runtime_remain_readable_without_speaker_discovery(monkeypat
     assert response.get_json()["schedules"] == runtime
 
 
+def test_recovery_operation_output_strips_private_relay_evidence(monkeypatch):
+    client = create_test_app().test_client()
+    outcome = {
+        "state": "recovery_pending", "recovery_state": "pending",
+        "recovery_attempts": 1, "audible_confirmed": False,
+        "relay_token": "secret-token", "relay_url": "http://wisp/private",
+        "saved_url": "https://station/private", "prior_url": "http://wisp/old",
+        "recovery_generation": "private-generation",
+        "content_identity": {"location": "private-location", "sourceAccount": "private"},
+    }
+    monkeypatch.setattr("app.api.routes.jobs.get_last_outcome", lambda _name: outcome)
+    response = client.get("/api/Living Room/operations")
+    assert response.status_code == 200
+    public = response.get_json()["last_outcome"]
+    assert public == {
+        "state": "recovery_pending", "recovery_state": "pending",
+        "recovery_attempts": 1, "audible_confirmed": False,
+    }
+
+
 def test_cancel_invalidates_only_and_does_not_touch_speaker(monkeypatch):
     client = create_test_app().test_client()
     calls = []
@@ -629,3 +649,27 @@ def test_station_schedule_requires_readiness_unless_saved_paused(monkeypatch, pa
     assert bool(queued) is paused
     if not paused:
         assert 'WISP_BASE_URL' in response.json['errors']['station_id']
+
+
+def test_explicit_discovery_refresh_repairs_missing_identity(monkeypatch):
+    from app.core import discovery
+    records = [{'name': 'HB', 'ip': '192.0.2.1', 'device_id': ''}]
+    calls = []
+    def refresh():
+        calls.append('refresh')
+        records[0]['device_id'] = 'VERIFIED'
+        return True
+    monkeypatch.setattr(discovery, 'get_all_cached_devices', lambda: records)
+    monkeypatch.setattr(discovery, 'safe_refresh_cache', refresh)
+    client = create_test_app().test_client()
+    assert client.get('/api/discover').get_json()[0]['device_id'] == ''
+    assert calls == []
+    assert client.get('/api/discover?refresh=true').get_json()[0]['device_id'] == 'VERIFIED'
+    assert calls == ['refresh']
+
+
+def test_explicit_discovery_failure_is_not_reported_as_success(monkeypatch):
+    monkeypatch.setattr('app.api.routes.discovery.safe_refresh_cache', lambda: False)
+    response = create_test_app().test_client().get('/api/discover?refresh=true')
+    assert response.status_code == 503
+    assert 'discovery failed' in response.get_json()['error']

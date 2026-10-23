@@ -350,15 +350,30 @@ def test_station_direct_play_pins_device_without_preset_mutation(rig, monkeypatc
     monkeypatch.setenv('WISP_BASE_URL', 'http://wisp.local:9001')
     item = favorites.add_station('Radio', 'https://radio.example/live.mp3')
     calls = []
-    monkeypatch.setattr(api.jobs, 'queue_station', lambda *args: calls.append(args) or {'state': 'accepted'})
+    monkeypatch.setattr(api.jobs, 'queue_station', lambda *args, **kw: calls.append((args, kw)) or {'state': 'accepted'})
     app = Flask(__name__)
     app.register_blueprint(favorites_bp)
     client = app.test_client()
     endpoint = '/api/Bedroom/stations/' + item['id'] + '/play'
     assert client.post(endpoint, json={}).status_code == 400
-    assert client.post(endpoint, json={'confirmed': True}).status_code == 202
-    assert calls == [('Bedroom', 'ABC', item['id'])]
+    assert client.post(endpoint, json={'confirmed': True, 'speaker_id': 'ABC', 'volume': 23}).status_code == 202
+    assert calls == [(('Bedroom', 'ABC', item['id'], 23), {'listening': True})]
     assert not rig[1]
+
+
+def test_normal_station_dispatch_uses_playback_engine_without_diagnostic_timer(rig, monkeypatch):
+    from app.scheduler import jobs
+
+    calls = []
+    monkeypatch.setattr(jobs, 'BACKGROUND_WORKER_POOL', object())
+    monkeypatch.setattr(jobs, 'submit_background_task', lambda *args: calls.append(args) or True)
+    first = jobs.queue_station('Bedroom', 'ABC', 'station', 23, listening=True)
+    second = jobs.queue_station('Bedroom', 'ABC', 'station', 23, listening=True)
+    assert first['operation_id'] == second['operation_id']
+    assert len(calls) == 1
+    assert calls[0][1] is playback.run_on
+    assert calls[0][3:] == (None, 23, None, 2, True, None, 'station')
+    assert calls[0][2]['device_id'] == 'ABC'
 
 
 def test_seed_initializes_missing_store_once_without_speakers(rig, monkeypatch):
@@ -369,16 +384,16 @@ def test_seed_initializes_missing_store_once_without_speakers(rig, monkeypatch):
     monkeypatch.setattr(library, 'read_presets', forbidden)
     monkeypatch.setattr(library, 'store_preset', forbidden)
     monkeypatch.setattr(playback, 'manual', forbidden)
-    assert len(favorites.stations()) == 6
+    assert len(favorites.stations()) == 5
     before = favorites.path().read_bytes()
-    assert len(favorites.stations()) == 6
+    assert len(favorites.stations()) == 5
     assert favorites.path().read_bytes() == before
     assert favorites._load()['station_seed_version'] == 1
     assert all('ready' not in item for item in favorites.stations())
     assert not rig[1]
 
 
-def test_seed_manifest_changes_only_chom_to_verified_mp3():
+def test_seed_manifest_keeps_five_defaults_without_buzz():
     import json
     seed = json.loads((favorites.Path(favorites.__file__).resolve().parents[1] / 'data/stations.seed.json').read_text())
     assert seed == {
@@ -389,8 +404,6 @@ def test_seed_manifest_changes_only_chom_to_verified_mp3():
              'https://playerservices.streamtheworld.com/api/livestream-redirect/CKMFFMAAC.aac'},
             {'name': 'CBC Radio One Montréal', 'url':
              'https://cbcradiolive.akamaized.net/hls/live/2041030/ES_R1EMT/master.m3u8'},
-            {'name': 'The Buzz 99.9', 'url':
-             'https://playerservices.streamtheworld.com/api/livestream-redirect/WBTZFM.mp3'},
             {'name': 'ICI Première Montréal 95.1', 'url':
              'https://rcavliveaudio.akamaized.net/hls/live/2006635/P-2QMTL0_MTL/master.m3u8'},
             {'name': 'Star 92.9', 'url':
@@ -430,7 +443,7 @@ def test_seed_preserves_custom_names_urls_favorites_schedules_and_archived_links
     }}))
     monkeypatch.setenv('CONFIG_FILE', str(config))
     config_before = config.read_bytes()
-    assert len(favorites.stations()) == 6
+    assert len(favorites.stations()) == 5
     for item in (renamed, custom, legacy):
         assert favorites.station(item['id']) == item
     loaded = favorites._load()
@@ -447,17 +460,17 @@ def test_concurrent_initial_reads_seed_once(rig):
     with ThreadPoolExecutor(max_workers=4) as pool:
         results = list(pool.map(lambda _: favorites.stations(), range(4)))
     assert all(result == results[0] for result in results)
-    assert len(results[0]) == 6
+    assert len(results[0]) == 5
 
 
 def test_seed_capacity_and_failed_write_are_atomic(rig, monkeypatch):
     document = {'version': 1, 'favorites': {}, 'stations': {
         str(i): {'id': str(i), 'name': str(i), 'url': f'https://radio.example/{i}'}
-        for i in range(495)}}
+        for i in range(496)}}
     favorites._save(document)
     before = favorites.path().read_bytes()
     warnings = []
-    assert len(favorites.stations(seed_warnings=warnings)) == 495
+    assert len(favorites.stations(seed_warnings=warnings)) == 496
     assert 'storage is full' in warnings[0]
     assert favorites.path().read_bytes() == before
     document['stations'] = {}
@@ -478,7 +491,7 @@ def test_seed_marks_already_populated_store_and_does_not_overwrite_future_marker
     document = favorites._load()
     document.pop('station_seed_version')
     favorites._save(document)
-    assert len(favorites.stations()) == 6
+    assert len(favorites.stations()) == 5
     assert favorites._load()['station_seed_version'] == 1
     document['station_seed_version'] = 2
     favorites._save(document)
@@ -535,3 +548,32 @@ def test_native_readiness_does_not_require_direct_diagnostic(rig, monkeypatch):
     assert radio['native_preset'] == {
         'available': False, 'blockers': ['radio_preset_assignment_unsupported']}
     assert radio['station_playback']['available'] is False  # /select not advertised
+
+
+def test_overview_shows_native_slots_and_private_service_summaries(rig, monkeypatch):
+    slots, calls = rig
+    slots[2] = {**ITEM, 'name': 'Existing speaker playlist'}
+    monkeypatch.setattr(library, 'read_sources', lambda ip: [copy.deepcopy(SOURCE),
+        {'source': 'SPOTIFY', 'account': 'secret', 'name': 'private@example.test', 'ready': True}])
+    value = favorites.overview('Bedroom')
+    assert value['favorites'] == []
+    assert value['presets'][1] == {'slot': 2, 'name': 'Existing speaker playlist'}
+    assert value['sources'] == [{k: SOURCE[k] for k in ('id', 'name', 'ready')}]
+    assert {'name': 'Spotify', 'ready': True} in value['services']
+    assert 'secret' not in str(value) and 'private@example.test' not in str(value)
+    assert calls == []
+
+
+def test_seed_preserves_existing_buzz_entry_and_legacy_candidate(rig):
+    from app.core import radio_stream
+    url = 'https://playerservices.streamtheworld.com/api/livestream-redirect/WBTZFM.mp3'
+    buzz = favorites.add_station('The Buzz 99.9', url)
+    document = favorites._load()
+    document.pop('station_seed_version')
+    favorites._save(document)
+    listed = favorites.stations()
+    assert buzz in listed
+    assert len(listed) == 6
+    assert favorites.station(buzz['id']) == buzz
+    assert radio_stream.candidate(url) == url.replace('https:', 'http:', 1)
+    assert not rig[1]

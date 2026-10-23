@@ -112,17 +112,20 @@ an available speaker or consuming a physical button. Seven or more stations can
 be saved (a bounded 500 records, separate from favorite records). No personal
 station list is shipped or published. The storage remains local in favorites.json.
 
-Select a speaker and **Play quietly** to start that station at volume 5. The
-confirmation explains that current audio is replaced. Wisp verifies identity,
-source readiness and /select capability, confirms volume zero, sends a direct
-ContentItem selection, and only fades after fresh matching Playing. It never
-writes a preset to play a station. After acceptance, the app opens the selected
-speaker page for existing playback status and controls. Dedicated in-page
-Stations now-playing/volume/stop controls are not part of this draft. Cancellation/manual-takeover protections are
-the same as routine playback. Radio firmware/HTTPS/redirect support still needs
-real-device qualification; accepted requests and descriptor responses are not
-proof of sound. Wisp supplies the canonical URL unchanged; any stream redirects
-are followed by the speaker, not validated or fetched by Wisp.
+Select a speaker and **Play…**, choose your listening volume, then press
+**Play radio**. Wisp prefills the current volume only after a fresh verified
+speaker read. If that read is unavailable, choose a volume explicitly. Normal
+Play uses native radio selection or the guarded relay, with the existing identity,
+volume-zero, source and ownership checks. It never writes a physical preset and
+has no diagnostic listening timer. Keep Wisp running for relay playback.
+
+After acceptance, Wisp opens the selected speaker page and shows accepted,
+starting, reported playing, or a concrete failure. **Stop radio** stops only that
+exact current listening session; an older Stop cannot stop replacement content
+or another speaker, and Stop never toggles power. The separate **Test playback…**
+action retains quiet volume 5 and any experimental direct-test risk consent.
+Hardware audibility and provider compatibility still require supervised checks;
+an accepted request or reported Playing state does not prove sound.
 
 **Remove** removes the station from the visible library only. It never clears a
 speaker button, rewrites schedules or stops audio. Its metadata remains privately
@@ -156,9 +159,9 @@ configuration file. `CONFIG_FILE` (default `config.json`, `.wisp-dev.json` for
 `CONFIG_FILE`; it stores the station library and native preset favorite records,
 not audio. Persist both runtime files across container replacement.
 
-On the first station-library listing, Wisp imports the six seed suggestions once,
+On the first station-library listing, Wisp imports the five seed suggestions once,
 including into an existing empty library on upgrade: CHOM 97.7, Énergie Montréal
-94.3, CBC **Radio One** Montréal (not CBC Music), The Buzz 99.9, ICI Première
+94.3, CBC **Radio One** Montréal (not CBC Music), ICI Première
 Montréal 95.1 and Star 92.9. No import button, speaker selection or `WISP_BASE_URL`
 is needed. Playback still requires normal radio setup and an explicit test.
 

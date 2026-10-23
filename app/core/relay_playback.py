@@ -47,6 +47,9 @@ def run_on(op: playback.Operation, station_id: str, saved_url: str,
     succeeded = False
     try:
         op['deadline'] = time.monotonic() + 60
+        op['expected_volume'] = volume
+        op['outcome']['target_volume'] = volume
+        op['outcome']['fade_in_duration'] = fade_duration
         op['outcome']['physical_stop_may_be_needed'] = False
         base = radio_relay.base_url(favorites.radio_base())
         # The normal automatic preflight already requires Standby. Repeat after
@@ -113,6 +116,7 @@ def run_on(op: playback.Operation, station_id: str, saved_url: str,
 
 
 def run_off(op: playback.Operation, session: radio_relay.Session, fade_duration: float) -> None:
+    op['mode'] = 'relay_stop'
     try:
         observed = _guard(op, session)
         volume = observed['volume']
@@ -149,4 +153,128 @@ def run_off(op: playback.Operation, session: radio_relay.Session, fade_duration:
         playback.finish(op, 'unknown', reason)
     finally:
         if radio_relay.active(session, op['outcome']['operation_id']):
+            radio_relay.close(session)
+
+
+def run_recovery(op: playback.Operation, generation: str) -> None:
+    """Replace one exact stalled relay lease without treating stale Playing as liveness."""
+    grant = playback.recovery_grant(op, generation, claim=True)
+    if grant is None:
+        return
+    session = None
+    succeeded = False
+    wrote = False
+
+    def current_grant() -> dict[str, Any]:
+        value = playback.recovery_grant(op, generation)
+        if value is None:
+            raise direct_radio.TestError('radio_recovery_no_longer_owned')
+        return value
+
+    def require_station() -> None:
+        current_grant()
+        try:
+            saved = favorites.station(grant['station_id'])
+        except (ValueError, KeyError, TypeError):
+            raise direct_radio.TestError('radio_recovery_station_changed') from None
+        if saved.get('url') != grant['saved_url']:
+            raise direct_radio.TestError('radio_recovery_station_changed')
+        current_grant()
+
+    def require_owned(url: str, volume: int, *, play_state: bool = False) -> dict[str, Any]:
+        current_grant()
+        observed = direct_radio._snapshot(op)
+        if (not direct_radio._owned(observed, url, volume)
+                or (play_state and observed['bose_state'] != 'PLAY_STATE')):
+            raise direct_radio.TestError('radio_recovery_evidence_changed')
+        current_grant()
+        return observed
+
+    def set_volume(url: str, before: int, target: int) -> None:
+        nonlocal wrote
+        def write(_ip: str) -> bool:
+            nonlocal wrote
+            require_owned(url, before)
+            current_grant()
+            wrote = True
+            return control.set_volume(direct_radio._address(op), target,
+                                      timeout=playback._budget(op, 2))
+        direct_radio._write(op, write)
+        require_owned(url, target)
+
+    try:
+        op['deadline'] = grant['expires_at']
+        require_station()
+        address = direct_radio._address(op)
+        require_owned(grant['prior_url'], grant['target_volume'], play_state=True)
+        current_grant()
+        session = radio_relay.prepare(
+            grant['device_id'], address, grant['operation_id'], grant['station_id'],
+            grant['schedule_name'], grant['saved_url'], radio_relay.base_url(favorites.radio_base()))
+        current_grant()
+        # Recovery has a silent stalled source, so it can establish zero before
+        # URI selection. The firmware may reset volume during SetURI; that is
+        # checked and lowered again while the new relay remains gated.
+        set_volume(grant['prior_url'], grant['target_volume'], 0)
+
+        def select(_ip: str) -> bool:
+            nonlocal wrote
+            require_station()
+            require_owned(grant['prior_url'], 0)
+            current_grant()
+            wrote = True
+            direct_radio._soap(direct_radio._address(op), 'SetAVTransportURI',
+                               playback._budget(op, 2), CurrentURI=session['url'],
+                               CurrentURIMetaData='')
+            return True
+        direct_radio._write(op, select)
+        after = direct_radio._snapshot(op)
+        if not direct_radio._owned(after, session['url']):
+            raise direct_radio.TestError('radio_recovery_replacement_unconfirmed')
+        current_grant()
+        if after['volume'] != 0:
+            set_volume(session['url'], after['volume'], 0)
+        else:
+            require_owned(session['url'], 0)
+        while not session['connected'].is_set():
+            require_station()
+            require_owned(session['url'], 0)
+            if not playback.wait(op, .1):
+                return
+        require_station()
+        require_owned(session['url'], 0)
+        if not playback.release_recovery_gate(op, generation, session):
+            raise direct_radio.TestError('radio_recovery_gate_not_released')
+        while True:
+            observed = require_owned(session['url'], 0)
+            if observed['bose_state'] == 'PLAY_STATE':
+                break
+            if not playback.wait(op, .25):
+                return
+        duration = min(playback.MAX_FADE_SECONDS, max(0, grant['fade_duration']))
+        op['deadline'] = min(grant['expires_at'], time.monotonic() + duration + 5)
+        started = time.monotonic()
+        current_volume = 0
+        for target in range(1, grant['target_volume'] + 1) if duration else [grant['target_volume']]:
+            due = started + duration * target / max(grant['target_volume'], 1)
+            if not playback.wait(op, max(0, due - time.monotonic())):
+                return
+            set_volume(session['url'], current_volume, target)
+            current_volume = target
+        require_owned(session['url'], grant['target_volume'], play_state=True)
+        playback.complete_recovery(op, generation)
+        succeeded = True
+    except Exception as error:
+        reason = (str(error) if isinstance(error, (direct_radio.TestError, radio_relay.RelayError))
+                  else 'radio_recovery_unavailable')
+        prewrite = not wrote and reason in {
+            'radio_recovery_station_changed', 'radio_recovery_evidence_changed',
+            'direct_identity_or_ownership_unavailable', 'direct_observation_unavailable',
+            'direct_grouped_or_zone_unknown', 'direct_volume_identity_or_mute_unknown',
+            'direct_volume_unavailable', 'direct_volume_unstable',
+        }
+        playback.end_recovery(op, generation, reason,
+                              recovery_state='declined' if prewrite else 'failed')
+    finally:
+        if session is not None and not succeeded and radio_relay.active(session, grant['operation_id']):
             radio_relay.close(session)

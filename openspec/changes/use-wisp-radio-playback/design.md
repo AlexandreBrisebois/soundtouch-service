@@ -6,6 +6,8 @@ See `proposal.md` for motivation. The current station page already supports expl
 
 The existing relay provides the safety boundary for speakers without a native radio source: a unique speaker-bound token, upstream validation, no audio before confirmed volume zero, ownership-aware cancellation, and isolated cleanup. The direct AVTransport diagnostic cannot replace that path because URI selection may start at remembered volume.
 
+Follow-up source inspection found that the normal station endpoint already starts sustained playback, but the station card exposed only Schedule and an overflow Test playback action. The initial visible Play correction retained quiet-test volume 5. `add-everyday-radio-listening` supersedes that confirmation with explicit listening volume and session-specific Stop while retaining the visible Play button, readiness refusal, separate diagnostic consent and invalidation on speaker change or navigation.
+
 ## Goals / Non-Goals
 
 **Goals:**

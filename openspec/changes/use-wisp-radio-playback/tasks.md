@@ -18,3 +18,12 @@
 - [x] 3.1 Run the complete automated test suite and strict OpenSpec validation, recording any unrelated pre-existing failure separately from regressions introduced by this change.
 - [x] 3.2 Obtain independent review of the API rejection boundary, legacy-data compatibility, schedule normalization, and unchanged playback safety gates before applying or archiving the change.
 - [ ] 3.3 After separate permission for real-speaker work, run supervised station Play and schedule qualification; report command acceptance, source/readback, and audibility as distinct evidence, and do not infer audible success from API state alone.
+
+## 4. Correct the everyday Play affordance
+
+The initial volume-5 affordance below was completed and tested as recorded. Its everyday listening semantics are superseded by `add-everyday-radio-listening`, which owns explicit volume, distinct diagnostic intent and session-specific Stop.
+
+- [x] 4.1 Add a visible station-card Play button, naming the selected speaker and volume in confirmation, using the existing normal station endpoint without diagnostic fallback; keep the separately labelled test flow and its risk consent.
+- [x] 4.2 Verify primary Play visibility, no autoplay before confirmation, speaker-change invalidation, unavailable-readiness refusal, and normal backend dispatch without the diagnostic timer; run isolated regression tests and strict specification validation.
+
+Follow-up evidence: the network-disabled Linux suite passed 731 tests, JavaScript syntax and whitespace checks passed, and strict OpenSpec validation passed all 11 items. Real-speaker qualification remains pending under task 3.3.

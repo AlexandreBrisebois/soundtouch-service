@@ -5,7 +5,8 @@
     let generation = 0;
     let controller = null;
     return {
-      next() { if (controller) controller.abort(); controller = new AbortController(); return {generation: ++generation, signal: controller.signal}; },
+      next() { if (controller) controller.abort(); controller = new AbortController(); return {generation: ++generation, signal: controller.signal, controller}; },
+      generation() { return generation; },
       current(ticket) { return ticket.generation === generation && !ticket.signal.aborted; },
       cancel() { generation += 1; if (controller) controller.abort(); },
     };
@@ -112,7 +113,7 @@
         source = item; stack = []; el('preset-browser').hidden = true; browse(null, 1);
       }, !item.ready)));
     }
-    async function open(name) {
+    async function open(name, rediscover = false) {
       close(false); speaker = name; el('presets-panel').hidden = false;
       el('speaker-settings').open = true;
       el('btn-manage-presets').setAttribute('aria-expanded', 'true');
@@ -120,13 +121,24 @@
       el('presets-title').focus();
       el('preset-browser').hidden = true;
       clear(el('preset-favorites')); clear(el('preset-sources'));
+      clear(el('preset-native-slots')); clear(el('preset-services'));
       message(pendingWrites.has(name) ? 'An earlier request may still be finishing. Refresh before making another change.' : 'Reading the speaker’s presets and music sources…');
       const ticket = gate.next(); busy(true);
+      let timedOut = false;
+      const deadline = setTimeout(() => { timedOut = true; ticket.controller.abort(); }, 45000);
       try {
+        if (rediscover) {
+          const response = await deps.fetch('/api/discover?refresh=true', {signal: ticket.signal});
+          if (!response.ok) throw new Error('Speaker discovery failed. Check the network and refresh again.');
+          if (!gate.current(ticket) || speaker !== name) return;
+        }
         const result = await request(name, '/favorites', {signal: ticket.signal});
         if (!gate.current(ticket) || speaker !== name) return;
         data = result; favorites = result.favorites || [];
         renderFavorites(); renderSources();
+        (data.presets || []).forEach(preset => el('preset-native-slots').append(text('p', `Button ${preset.slot}: ${preset.name}`)));
+        (data.services || []).forEach(service => el('preset-services').append(text('p', `${service.name} · ${service.ready ? 'Ready' : 'Unavailable'}`)));
+        if (!(data.services || []).length) el('preset-services').append(text('p', 'No connected services reported.'));
         const slots = el('preset-slot'); clear(slots);
         for (let slot = 1; slot <= 6; slot += 1) {
           const preset = (data.presets || []).find(item => item.slot === slot);
@@ -135,8 +147,12 @@
         }
         message('Choose a NAS folder or playlist. Existing buttons stay unchanged until you confirm.');
         return true;
-      } catch (error) { if (gate.current(ticket)) message(error.message); }
-      finally { if (gate.current(ticket)) { busy(false); if (pendingWrites.has(name)) busy(true); } }
+      } catch (error) {
+        if (speaker === name && ticket.generation === gate.generation()) message(timedOut ? 'Speaker read timed out. Check the speaker and network, then refresh.' : error.message);
+      } finally {
+        clearTimeout(deadline);
+        if (speaker === name && ticket.generation === gate.generation()) { busy(false); if (pendingWrites.has(name)) busy(true); }
+      }
     }
     async function browse(container, start, append = false, nextStack = stack) {
       if (!speaker || !source) return;
@@ -254,7 +270,7 @@
     }
     el('btn-manage-presets').addEventListener('click', () => open(deps.getSpeaker()));
     el('presets-close').addEventListener('click', () => close());
-    el('presets-refresh').addEventListener('click', () => { if (speaker && !pendingWrites.has(speaker)) open(speaker); });
+    el('presets-refresh').addEventListener('click', () => { if (speaker && !pendingWrites.has(speaker)) open(speaker, true); });
     el('preset-up').addEventListener('click', () => { const parentStack = stack.slice(0, -1); browse(parentStack[parentStack.length - 1] || null, 1, false, parentStack); });
     el('preset-review').addEventListener('click', review);
     el('preset-confirm').addEventListener('click', confirm);

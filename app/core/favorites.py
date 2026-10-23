@@ -95,8 +95,13 @@ def _lookup(key: str, kind: str, device_id: str) -> Any:
 
 def device(speaker: str, device_id: str | None = None) -> dict[str, str]:
     found = discovery.resolve_device(speaker, device_id)
-    if not found or not found.get('device_id') or status.get_device_id(found['ip']) != found['device_id']:
+    if not found or not found.get('device_id'):
         raise FavoriteError('Speaker identity is unavailable. Refresh the speaker list.')
+    live_id = status.get_device_id(found['ip'])
+    if not live_id:
+        raise FavoriteError('Speaker did not answer identity verification. Check its connection in the Bose app, then retry.')
+    if live_id != found['device_id']:
+        raise FavoriteError('Speaker identity changed. Refresh the speaker list and select it again.')
     return found
 
 
@@ -175,6 +180,7 @@ def overview(speaker: str) -> dict[str, Any]:
     ready = any(s['source'] == 'LOCAL_INTERNET_RADIO' and s['ready'] for s in sources)
     supported = capabilities(found['ip'])
     return {'favorites': saved, 'speaker_id': found['device_id'],
+            'services': library.service_summaries(sources),
             'sources': [{k: s[k] for k in ('id', 'name', 'ready')} for s in sources if s['source'] == 'STORED_MUSIC'],
             'presets': [{'slot': slot, 'name': item['name'] if item else 'Empty'} for slot, item in slots.items()],
             'radio': {'available': False, 'reason': 'Radio plays from Wisp without changing a physical speaker button.',

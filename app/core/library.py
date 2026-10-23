@@ -82,12 +82,25 @@ def read_sources(ip: str) -> list[dict[str, Any]]:
     result = []
     for item in root.findall('sourceItem'):
         source, account = item.get('source', ''), item.get('sourceAccount', '')
-        if source not in {'STORED_MUSIC', 'LOCAL_INTERNET_RADIO'}:
+        if not source:
             continue
         result.append({'id': source_id(source + ':' + account), 'source': source,
                        'account': account, 'name': (item.text or source).strip()[:160],
                        'ready': item.get('status') == 'READY'})
     return result
+
+
+def service_summaries(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Public service types/status only; account names and IDs stay private."""
+    labels = {'STORED_MUSIC': 'NAS music library', 'LOCAL_INTERNET_RADIO': 'Internet radio',
+              'SPOTIFY': 'Spotify', 'AMAZON': 'Amazon Music', 'TUNEIN': 'TuneIn',
+              'AUX': 'AUX', 'BLUETOOTH': 'Bluetooth', 'AIRPLAY': 'AirPlay',
+              'ALEXA': 'Alexa', 'UPNP': 'UPnP', 'QPLAY': 'QPlay'}
+    grouped: dict[str, bool] = {}
+    for source in sources:
+        label = labels.get(source['source'], 'Other speaker service')
+        grouped[label] = grouped.get(label, False) or source['ready']
+    return [{'name': name, 'ready': ready} for name, ready in sorted(grouped.items())]
 
 
 def navigate(ip: str, source: dict[str, Any], container: dict[str, Any] | None,
