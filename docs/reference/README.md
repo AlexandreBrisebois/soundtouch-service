@@ -20,6 +20,27 @@ proxy. Product capabilities add only the typed reads and commands needed for
 their ownership and volume-safety contracts. A generic proxy would bypass those
 contracts and is outside the service's scope.
 
+## Bose SoundTouch end-of-life notice
+
+- Local snapshot: [SoundTouch-End-of-Life.pdf](SoundTouch-End-of-Life.pdf)
+- Official source: <https://www.bose.com/soundtouch-end-of-life>
+- Bose update date: 2026-05-06
+- Retrieved: 2026-10-22
+- SHA-256: `e6b232b3a8c954ef7589fe5d6c6de12320bb4d76c30f445072261abd671e874c`
+
+The notice is the authority for Bose's post-cloud product support statements.
+It says local setup, remote controls, grouping, Bluetooth, AirPlay, AUX, and
+Spotify Connect continue, while SoundTouch-app music-service browsing, Alexa
+voice commands, and guaranteed preset access do not. Spotify Connect remains an
+external workflow initiated from the Spotify app; a speaker-reported Spotify
+source is not a Wisp-controlled music-service integration.
+
+The notice does not state that independently supplied internet-radio streams
+are unavailable. It must not be used to remove or weaken Wisp's station library,
+radio Play/Test/diagnostic intents, scheduled radio, relay ownership, Stop, or
+bounded relay-recovery behavior. Those capabilities depend on Wisp's own stream
+and supervised-speaker evidence rather than Bose's retired cloud service.
+
 ## Community implementations
 
 When a SoundTouch behavior or integration is unclear, consult the

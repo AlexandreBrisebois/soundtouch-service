@@ -121,7 +121,7 @@
       el('presets-title').focus();
       el('preset-browser').hidden = true;
       clear(el('preset-favorites')); clear(el('preset-sources'));
-      clear(el('preset-native-slots')); clear(el('preset-services'));
+      clear(el('preset-native-slots')); clear(el('preset-external-playback'));
       message(pendingWrites.has(name) ? 'An earlier request may still be finishing. Refresh before making another change.' : 'Reading the speaker’s presets and music sources…');
       const ticket = gate.next(); busy(true);
       let timedOut = false;
@@ -137,8 +137,11 @@
         data = result; favorites = result.favorites || [];
         renderFavorites(); renderSources();
         (data.presets || []).forEach(preset => el('preset-native-slots').append(text('p', `Button ${preset.slot}: ${preset.name}`)));
-        (data.services || []).forEach(service => el('preset-services').append(text('p', `${service.name} · ${service.ready ? 'Ready' : 'Unavailable'}`)));
-        if (!(data.services || []).length) el('preset-services').append(text('p', 'No connected services reported.'));
+        (data.external_playback || []).forEach(item => el('preset-external-playback').append(text(
+          'p', `${item.name} · Speaker-reported ${item.ready ? 'ready' : 'unavailable'} — ${item.guidance}`)));
+        if (!(data.external_playback || []).length) {
+          el('preset-external-playback').append(text('p', 'No external playback source reported.'));
+        }
         const slots = el('preset-slot'); clear(slots);
         for (let slot = 1; slot <= 6; slot += 1) {
           const preset = (data.presets || []).find(item => item.slot === slot);

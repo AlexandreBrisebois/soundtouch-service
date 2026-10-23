@@ -550,16 +550,29 @@ def test_native_readiness_does_not_require_direct_diagnostic(rig, monkeypatch):
     assert radio['station_playback']['available'] is False  # /select not advertised
 
 
-def test_overview_shows_native_slots_and_private_service_summaries(rig, monkeypatch):
+def test_overview_allows_spotify_connect_and_preserves_supported_workflows(rig, monkeypatch):
     slots, calls = rig
     slots[2] = {**ITEM, 'name': 'Existing speaker playlist'}
+    monkeypatch.setenv('WISP_BASE_URL', 'http://wisp.local:9001')
+    monkeypatch.setattr(favorites, 'capabilities', lambda ip: {'/storePreset', '/navigate', '/select'})
     monkeypatch.setattr(library, 'read_sources', lambda ip: [copy.deepcopy(SOURCE),
-        {'source': 'SPOTIFY', 'account': 'secret', 'name': 'private@example.test', 'ready': True}])
+        {'source': 'SPOTIFY', 'account': 'secret', 'name': 'private@example.test', 'ready': True},
+        {'source': 'ALEXA', 'account': 'alexa-secret', 'name': 'Alexa', 'ready': True},
+        {'source': 'AMAZON', 'account': 'amazon-secret', 'name': 'Amazon Music', 'ready': True},
+        {'source': 'LOCAL_INTERNET_RADIO', 'account': '', 'name': 'Internet radio', 'ready': True}])
     value = favorites.overview('Bedroom')
     assert value['favorites'] == []
     assert value['presets'][1] == {'slot': 2, 'name': 'Existing speaker playlist'}
     assert value['sources'] == [{k: SOURCE[k] for k in ('id', 'name', 'ready')}]
-    assert {'name': 'Spotify', 'ready': True} in value['services']
+    assert 'services' not in value
+    assert value['external_playback'] == [{
+        'name': 'Spotify Connect',
+        'ready': True,
+        'guidance': 'Start playback from the Spotify app.',
+    }]
+    assert value['radio']['station_playback'] == {
+        'available': True, 'requires_source': 'LOCAL_INTERNET_RADIO'}
+    assert 'Alexa' not in str(value) and 'Amazon Music' not in str(value)
     assert 'secret' not in str(value) and 'private@example.test' not in str(value)
     assert calls == []
 

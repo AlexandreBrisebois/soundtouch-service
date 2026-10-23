@@ -66,12 +66,14 @@ def test_direct_select_uses_xml_and_never_store_preset(monkeypatch):
     assert kwargs['timeout'] == 1.2
 
 
-def test_service_summaries_hide_account_ids_and_names(monkeypatch):
-    body = '<sources><sourceItem source="STORED_MUSIC" sourceAccount="nas-private" status="READY">HD</sourceItem><sourceItem source="SPOTIFY" sourceAccount="secret-account" status="READY">private@example.test</sourceItem><sourceItem source="SPOTIFY" sourceAccount="second" status="UNAVAILABLE">second@example.test</sourceItem><sourceItem source="TUNEIN" status="READY"/></sources>'
+def test_external_playback_allows_only_spotify_and_hides_private_values(monkeypatch):
+    body = '<sources><sourceItem source="STORED_MUSIC" sourceAccount="nas-private" status="READY">HD</sourceItem><sourceItem source="SPOTIFY" sourceAccount="secret-account" status="READY">private@example.test</sourceItem><sourceItem source="SPOTIFY" sourceAccount="second" status="UNAVAILABLE">second@example.test</sourceItem><sourceItem source="TUNEIN" status="READY"/><sourceItem source="ALEXA" status="READY"/><sourceItem source="AMAZON" status="READY"/></sources>'
     monkeypatch.setattr(library.status, '_get_xml', lambda *a: ET.fromstring(body))
     sources = library.read_sources('fake')
-    assert len(sources) == 4
-    assert library.service_summaries(sources) == [
-        {'name': 'NAS music library', 'ready': True},
-        {'name': 'Spotify', 'ready': True}, {'name': 'TuneIn', 'ready': True}]
-    assert 'private' not in str(library.service_summaries(sources))
+    assert len(sources) == 6
+    assert library.external_playback(sources) == [{
+        'name': 'Spotify Connect',
+        'ready': True,
+        'guidance': 'Start playback from the Spotify app.',
+    }]
+    assert 'private' not in str(library.external_playback(sources))

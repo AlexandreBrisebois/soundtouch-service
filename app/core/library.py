@@ -90,17 +90,16 @@ def read_sources(ip: str) -> list[dict[str, Any]]:
     return result
 
 
-def service_summaries(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Public service types/status only; account names and IDs stay private."""
-    labels = {'STORED_MUSIC': 'NAS music library', 'LOCAL_INTERNET_RADIO': 'Internet radio',
-              'SPOTIFY': 'Spotify', 'AMAZON': 'Amazon Music', 'TUNEIN': 'TuneIn',
-              'AUX': 'AUX', 'BLUETOOTH': 'Bluetooth', 'AIRPLAY': 'AirPlay',
-              'ALEXA': 'Alexa', 'UPNP': 'UPnP', 'QPLAY': 'QPlay'}
-    grouped: dict[str, bool] = {}
-    for source in sources:
-        label = labels.get(source['source'], 'Other speaker service')
-        grouped[label] = grouped.get(label, False) or source['ready']
-    return [{'name': name, 'ready': ready} for name, ready in sorted(grouped.items())]
+def external_playback(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Allowlisted external playback only; account names and IDs stay private."""
+    spotify = [source for source in sources if source['source'] == 'SPOTIFY']
+    if not spotify:
+        return []
+    return [{
+        'name': 'Spotify Connect',
+        'ready': any(source['ready'] for source in spotify),
+        'guidance': 'Start playback from the Spotify app.',
+    }]
 
 
 def navigate(ip: str, source: dict[str, Any], container: dict[str, Any] | None,

@@ -180,7 +180,7 @@ def overview(speaker: str) -> dict[str, Any]:
     ready = any(s['source'] == 'LOCAL_INTERNET_RADIO' and s['ready'] for s in sources)
     supported = capabilities(found['ip'])
     return {'favorites': saved, 'speaker_id': found['device_id'],
-            'services': library.service_summaries(sources),
+            'external_playback': library.external_playback(sources),
             'sources': [{k: s[k] for k in ('id', 'name', 'ready')} for s in sources if s['source'] == 'STORED_MUSIC'],
             'presets': [{'slot': slot, 'name': item['name'] if item else 'Empty'} for slot, item in slots.items()],
             'radio': {'available': False, 'reason': 'Radio plays from Wisp without changing a physical speaker button.',

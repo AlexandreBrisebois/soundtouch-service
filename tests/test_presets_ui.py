@@ -50,6 +50,9 @@ def test_preset_markup_is_accessible_and_assets_are_linked():
     assert 'id="presets-title" tabindex="-1"' in text
     assert '/app-static/presets.js' in text
     assert '/app-static/presets.css' in text
+    assert 'id="btn-speaker-stations"' in text
+    assert '<h3>External playback</h3>' in text
+    assert 'Connected services' not in text
     assert 'favorite_id: favorite || null' in text
     assert 'innerHTML' not in (ROOT / 'app/static/presets.js').read_text()
 
@@ -214,11 +217,14 @@ assert.equal(calls.length,1);
 
 def test_native_slots_are_visible_without_wisp_favorites_and_refresh_rediscovers():
     checks("""
-getResponse=async url=>ok(url.includes('/discover') ? [] : {favorites:[], sources:[], services:[{name:'Spotify',ready:true}], presets:[{slot:1,name:'Existing playlist'}]});
+getResponse=async url=>ok(url.includes('/discover') ? [] : {favorites:[], sources:[{id:'nas',name:'Family NAS',ready:true}], services:[{name:'Alexa',ready:true},{name:'Amazon Music',ready:true}], external_playback:[{name:'Spotify Connect',ready:true,guidance:'Start playback from the Spotify app.'}], presets:[{slot:1,name:'Existing playlist'}]});
 await ui.open('Living Room');
 assert.equal(el('preset-selection').hidden,true);
 assert.equal(el('preset-native-slots').children[0].textContent,'Button 1: Existing playlist');
-assert.equal(el('preset-services').children[0].textContent,'Spotify · Ready');
+assert.equal(el('preset-external-playback').children[0].textContent,'Spotify Connect · Speaker-reported ready — Start playback from the Spotify app.');
+assert.equal(el('preset-external-playback').children[0].tagName,'p');
+assert(!el('preset-external-playback').children.some(item=>/Alexa|Amazon Music/.test(item.textContent)));
+assert.equal(el('preset-sources').children[0].textContent,'Family NAS');
 assert.equal(el('preset-favorites').children[0].textContent,'No saved favorites yet.');
 await el('presets-refresh').listeners.click(); await flush();
 assert.equal(calls[calls.length-2].url,'/api/discover?refresh=true');
@@ -240,16 +246,16 @@ assert.equal(calls[calls.length-1].url,'/api/discover?refresh=true');
 """)
 
 
-def test_speaker_switch_rejects_native_slots_and_services_from_old_request():
+def test_speaker_switch_rejects_native_slots_and_external_playback_from_old_request():
     checks("""
 let pending=[];
 getResponse=()=>new Promise(resolve=>pending.push(resolve));
 const old=ui.open('Living Room');
 current='Kitchen'; const next=ui.open(current);
-pending[1](ok({favorites:[],sources:[],services:[{name:'TuneIn',ready:true}],presets:[{slot:1,name:'Kitchen preset'}]})); await next;
-pending[0](ok({favorites:[],sources:[],services:[{name:'Spotify',ready:true}],presets:[{slot:1,name:'Old preset'}]})); await old;
+pending[1](ok({favorites:[],sources:[],external_playback:[{name:'Spotify Connect',ready:false,guidance:'Start playback from the Spotify app.'}],presets:[{slot:1,name:'Kitchen preset'}]})); await next;
+pending[0](ok({favorites:[],sources:[],external_playback:[{name:'Spotify Connect',ready:true,guidance:'Start playback from the Spotify app.'}],presets:[{slot:1,name:'Old preset'}]})); await old;
 assert.equal(el('preset-native-slots').children[0].textContent,'Button 1: Kitchen preset');
-assert.equal(el('preset-services').children[0].textContent,'TuneIn · Ready');
+assert.equal(el('preset-external-playback').children[0].textContent,'Spotify Connect · Speaker-reported unavailable — Start playback from the Spotify app.');
 """)
 
 
