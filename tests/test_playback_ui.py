@@ -28,7 +28,11 @@ function element(id) {
     const classes = new Set();
     elements.set(id, {
       id, textContent: '', innerHTML: '', hidden: false, disabled: false,
-      dataset: {}, style: {}, listeners: {},
+      dataset: {}, style: {}, listeners: {}, children: [], value: '',
+      setAttribute(name, value) { this[name] = value; },
+      append(...items) { this.children.push(...items); },
+      replaceChildren(...items) { this.children = items; },
+      focus() {},
       classList: {
         add: name => classes.add(name), remove: name => classes.delete(name),
         contains: name => classes.has(name),
@@ -43,6 +47,7 @@ const context = vm.createContext({
   assert, element, timers, console, AbortController,
   document: {
     readyState: 'loading', getElementById: element,
+    createElement: tag => element(tag + '-' + elements.size),
     querySelectorAll: () => [], addEventListener: () => {},
   },
   window: {addEventListener: () => {}}, navigator: {},
@@ -254,13 +259,13 @@ def test_source_choice_shows_only_relevant_fields_and_preserves_drafts():
       setPlayKind('radio');
       assert.equal(element('schedule-radio').hidden, false);
       for (const kind of ['favorite', 'preset', 'aux']) assert.equal(element(`schedule-${kind}`).hidden, true);
-      assert.deepEqual(scheduleSource(), {station_id:'radio-id', favorite_id:null, preset:null, source:null});
+      assert.deepEqual(scheduleSource(), {station_id:'radio-id', favorite_id:null, preset:null, source:null, collection:null});
       setPlayKind('favorite');
-      assert.deepEqual(scheduleSource(), {station_id:null, favorite_id:'favorite-id', preset:null, source:null});
+      assert.deepEqual(scheduleSource(), {station_id:null, favorite_id:'favorite-id', preset:null, source:null, collection:null});
       setPlayKind('preset');
-      assert.deepEqual(scheduleSource(), {station_id:null, favorite_id:null, preset:4, source:null});
+      assert.deepEqual(scheduleSource(), {station_id:null, favorite_id:null, preset:4, source:null, collection:null});
       setPlayKind('aux');
-      assert.deepEqual(scheduleSource(), {station_id:null, favorite_id:null, preset:null, source:'AUX'});
+      assert.deepEqual(scheduleSource(), {station_id:null, favorite_id:null, preset:null, source:'AUX', collection:null});
       setPlayKind('radio');
       assert.equal(scheduleSource().station_id, 'radio-id');
       assert.equal(element('f-favorite').value, 'favorite-id');

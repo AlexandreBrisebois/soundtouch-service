@@ -83,7 +83,10 @@ def list_stations() -> Any:
 @favorites_bp.post('/api/stations')
 def add_station() -> Any:
     data = body()
-    return jsonify(station=favorites.add_station(data.get('name'), data.get('url'))), 201
+    from app.core import station_drafts
+    if not isinstance(data.get('draft_id'), str):
+        raise favorites.FavoriteError('Test the station draft, confirm audible sound and Stop before Save.')
+    return jsonify(station=station_drafts.save(data['draft_id'], data)), 201
 
 
 @favorites_bp.delete('/api/stations/<station_id>')
@@ -113,11 +116,13 @@ def play_station(speaker_name: str, station_id: str) -> Any:
 
 
 def _start_station(speaker_name: str, station_id: str, data: dict[str, Any],
-                   volume: int, *, listening: bool) -> Any:
+                   volume: int, *, listening: bool, stoppable: bool = False) -> Any:
     if data.get('confirmed') is not True:
         raise favorites.FavoriteError('Confirm playback on the selected speaker first.')
     from app.core import radio_relay
     item = favorites.station(station_id)
+    if item.get('draft'):
+        raise favorites.FavoriteError('Complete the station draft Test and Stop before using Radio actions.')
     found = favorites.device(speaker_name)
     if listening and data['speaker_id'] != found['device_id']:
         raise favorites.FavoriteError('Speaker identity changed. Select the speaker again.')
@@ -125,7 +130,9 @@ def _start_station(speaker_name: str, station_id: str, data: dict[str, Any],
     if not ready['available']:
         raise favorites.FavoriteError(ready['reason'])
     try:
-        operation = jobs.queue_station(speaker_name, found['device_id'], station_id, volume, listening=listening)
+        operation = (jobs.queue_station(speaker_name, found['device_id'], station_id, volume,
+                                        listening=listening, stoppable=True) if stoppable else
+                     jobs.queue_station(speaker_name, found['device_id'], station_id, volume, listening=listening))
     except jobs.StationRequestConflict as exc:
         return jsonify(error=str(exc)), 409
     if operation is None:
@@ -137,6 +144,8 @@ def _start_station(speaker_name: str, station_id: str, data: dict[str, Any],
 def listening_options(speaker_name: str, station_id: str) -> Any:
     from app.core import radio_relay, status
     item = favorites.station(station_id)
+    if item.get('draft'):
+        raise favorites.FavoriteError('Complete the station draft Test and Stop before using Radio actions.')
     found = favorites.device(speaker_name)
     ready = radio_relay.readiness(item['url'], found['ip'])
     volume = status.get_volume(found['ip']) if ready['available'] else None
@@ -149,11 +158,13 @@ def listening_options(speaker_name: str, station_id: str) -> Any:
 
 @favorites_bp.post('/api/<speaker_name>/stations/<station_id>/test')
 def quiet_station_test(speaker_name: str, station_id: str) -> Any:
-    return _start_station(speaker_name, station_id, body(), 5, listening=False)
+    return _start_station(speaker_name, station_id, body(), 5, listening=False, stoppable=True)
 
 
 @favorites_bp.post('/api/<speaker_name>/stations/<station_id>/stop')
 def stop_station(speaker_name: str, station_id: str) -> Any:
+    if favorites.station(station_id).get('draft'):
+        raise favorites.FavoriteError('Stop this test from its station draft.')
     data = body()
     if any(not isinstance(data.get(key), str) or not data[key].strip()
            for key in ('speaker_id', 'operation_id')):
@@ -172,6 +183,8 @@ def stop_station(speaker_name: str, station_id: str) -> Any:
 def direct_test_info(speaker_name: str, station_id: str) -> Any:
     from app.core import direct_radio, radio_stream
     item = favorites.station(station_id)
+    if item.get('draft'):
+        raise favorites.FavoriteError('Complete the station draft Test and Stop before using Radio actions.')
     favorites.device(speaker_name)
     try:
         radio_stream.candidate(item['url'])
@@ -190,6 +203,8 @@ def direct_test(speaker_name: str, station_id: str) -> Any:
     if data.get('confirmed') is not True or data.get('accept_startup_volume_risk') is not True:
         raise favorites.FavoriteError(direct_radio.WARNING)
     item = favorites.station(station_id)
+    if item.get('draft'):
+        raise favorites.FavoriteError('Complete the station draft Test and Stop before using Radio actions.')
     radio_stream.candidate(item['url'])  # Validate before creating/canceling any operation.
     found = favorites.device(speaker_name)
     try:
@@ -225,6 +240,8 @@ def radio_session_stream(token: str) -> Any:
 def station_readiness(speaker_name: str, station_id: str) -> Any:
     from app.core import radio_relay
     item = favorites.station(station_id)
+    if item.get('draft'):
+        raise favorites.FavoriteError('Complete the station draft Test and Stop before using Radio actions.')
     found = favorites.device(speaker_name)
     response = jsonify(radio_relay.readiness(item['url'], found['ip']))
     response.headers['Cache-Control'] = 'no-store'

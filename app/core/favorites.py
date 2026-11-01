@@ -199,13 +199,13 @@ def browse(speaker: str, data: dict[str, Any]) -> dict[str, Any]:
     if isinstance(start, bool) or not isinstance(start, int) or not 1 <= start <= 1000000:
         raise FavoriteError('Invalid browse page.')
     container = _lookup(str(data['container_id']), 'item', found['device_id']) if data.get('container_id') else None
-    if container and (not container.get('is_dir') or container.get('sourceAccount') != source['account']):
+    if container and (not (container.get('is_collection') or container.get('is_dir')) or container.get('sourceAccount') != source['account']):
         raise FavoriteError('Choose a folder from this source.')
     result = library.navigate(found['ip'], source, container, start)
     items = []
     for item in result['items']:
         key = _token('item', found['device_id'], item)
-        items.append({'id': key, **{k: item[k] for k in ('name', 'is_dir', 'playable', 'presetable')}})
+        items.append({'id': key, **{k: item[k] for k in ('name', 'is_dir', 'playable', 'presetable', 'type', 'is_collection', 'preview_available') if k in item}})
     return {**result, 'items': items}
 
 
@@ -220,7 +220,7 @@ def plan(speaker: str, data: dict[str, Any]) -> dict[str, Any]:
     kind = 'nas'
     item = _lookup(str(data.get('item_id', '')), 'item', found['device_id'])
     if (item.get('source') != 'STORED_MUSIC' or not item.get('playable')
-            or not item.get('presetable') or not item.get('is_dir')):
+            or not item.get('presetable') or not (item.get('is_collection') or item.get('is_dir'))):
         raise FavoriteError('Choose a playable, preset-capable folder or playlist reported by the speaker.')
     favorite_id = uuid.uuid4().hex
     # Refresh source readiness; do not trust an earlier browse page.
@@ -234,10 +234,14 @@ def plan(speaker: str, data: dict[str, Any]) -> dict[str, Any]:
     value = {'id': favorite_id, 'name': name, 'kind': kind, 'speaker_id': found['device_id'], 'slot': slot,
              'state': 'saved', 'content': item, 'before': slots}
     previous = slots[slot]
+    from app.scheduler import jobs
+    impacts = jobs.source_schedule_impacts(found['device_id'], slot=slot) if previous else []
+    value['schedule_impacts'] = impacts
     plan_id = _token('plan', found['device_id'], value)
-    return {'plan_id': plan_id, 'name': name, 'slot': slot,
+    return {'plan_id': plan_id, 'name': name, 'slot': slot, 'schedule_impacts': impacts,
+            'library': item.get('sourceAccount'), 'speaker': speaker,
             'replaces': previous['name'] if previous else 'Empty',
-            'warning': 'This changes the physical speaker button. It does not start audio. Existing automation fades will be canceled. Hardware playback must be tested separately.'}
+            'warning': 'Dependent button schedules will be paused for review before replacement. This changes the physical speaker button. It does not start audio. Existing automation fades will be canceled. Hardware playback must be tested separately.'}
 
 
 def confirm(speaker: str, plan_id: str) -> dict[str, Any]:
@@ -260,6 +264,12 @@ def confirm(speaker: str, plan_id: str) -> dict[str, Any]:
             raise FavoriteError('Music source is no longer ready. No preset was programmed.')
         if '/storePreset' not in capabilities(ip):
             raise FavoriteError('Preset programming capability is unavailable.')
+        from app.scheduler import jobs
+        if before[value['slot']]:
+            impacts = jobs.source_schedule_impacts(value['speaker_id'], slot=value['slot'])
+            if impacts != value.get('schedule_impacts', []):
+                raise FavoriteError('Affected schedules changed. Review the button replacement again.')
+            jobs.pause_source_schedules(value['speaker_id'], slot=value['slot'], reason='button_replaced_review_required')
         value.pop('before')
         value['state'] = 'unknown'
         # Durable intent is written before the device command. Restart cannot turn
@@ -398,9 +408,13 @@ def _seed_stations(document: dict[str, Any]) -> dict[str, Any]:
 def station(station_id: str, *, allow_removed: bool = False) -> dict[str, Any]:
     with _lock:
         value = _load().get('stations', {}).get(station_id)
-        if not isinstance(value, dict) or (value.get('removed') and not allow_removed):
-            raise FavoriteError('Station not found in the library.')
-        return copy.deepcopy(value)
+        if isinstance(value, dict):
+            if value.get('removed') and not allow_removed:
+                raise FavoriteError('Station not found in the library.')
+            return copy.deepcopy(value)
+    # Do not acquire the draft lock under the persisted-store lock.
+    from app.core import station_drafts
+    return station_drafts.station(station_id)
 
 
 def remove_station(station_id: str) -> None:

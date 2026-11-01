@@ -456,3 +456,34 @@ input[type="range"]#f-volume { width: 100%; }
 .support-settings { margin-top: 24px; border-top: 1px solid var(--border, #ddd); padding-top: 16px; }
 .support-settings > summary { cursor: pointer; padding: 10px 0; font-weight: 600; }
 .support-settings > summary:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }
+
+/* The phone dock and collection trial actions reserve their own content space. */
+:root { --dock-height: calc(64px + env(safe-area-inset-bottom, 0px)); --collection-actions-height: 154px; }
+#app { padding-bottom: var(--dock-height); }
+.phone-dock { position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); width: min(100%, 640px); min-height: var(--dock-height); display: flex; background: var(--surface); border-top: 1px solid var(--border); padding: 6px 16px calc(6px + env(safe-area-inset-bottom, 0px)); z-index: 30; }
+.phone-dock button { flex: 1; min-height: 50px; border-radius: var(--radius-sm); font-size: 15px; color: var(--text-muted); }
+.phone-dock button[aria-current="page"] { background: var(--primary-lt); color: var(--primary-dk); font-weight: 600; }
+.hub-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.hub-actions button { min-height: 48px; }
+.music-destinations { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+.music-actions { position: fixed; bottom: var(--dock-height); left: 50%; transform: translateX(-50%); width: min(100%,640px); height: var(--collection-actions-height); max-height: 35dvh; overflow-y: auto; z-index: 25; padding: 12px 16px; background: var(--surface); border-top: 1px solid var(--border); }
+.music-actions > div { display: flex; gap: 8px; }
+.music-actions button { flex: 1; min-height: 48px; }
+#music-body.has-collection { padding-bottom: calc(var(--collection-actions-height) + 36px); }
+.music-row { display: block; width: 100%; min-height: 54px; padding: 14px 12px; text-align: left; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; font-size: 15px; }
+.music-library-card, .music-review, #music-session, #stations-session { padding: 16px; margin: 12px 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow-wrap: anywhere; }
+.music-review button, .music-library-card button { min-height: 44px; }
+#music-path, #music-actions-label { overflow-wrap: anywhere; }
+#music-actions-label { font-weight: 600; margin-bottom: 8px; }
+#music-review { scroll-margin-top: 80px; }
+#station-draft-status, #music-message { margin: 10px 0; }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--primary-dk); outline-offset: 3px; }
+
+/* Constrain the scroll region so cached scrollTop and reserved footer space agree. */
+#app { height: 100dvh; min-height: 0; overflow: hidden; }
+.view { min-height: 0; overflow: hidden; }
+.scroll-body, .form-body { min-height: 0; }
+.header, .thumb-bar { flex-shrink: 0; }
+
+/* A transformed view would make its fixed action area relative to the view. */
+#view-music { animation: none; }

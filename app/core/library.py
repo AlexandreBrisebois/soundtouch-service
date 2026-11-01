@@ -110,7 +110,7 @@ def navigate(ip: str, source: dict[str, Any], container: dict[str, Any] | None,
     if container:
         entry = ET.SubElement(root, 'item', {'Playable': '1'})
         ET.SubElement(entry, 'name').text = container['name']
-        ET.SubElement(entry, 'type').text = 'dir'
+        ET.SubElement(entry, 'type').text = container.get('type', 'dir')
         entry.append(content_xml(container))
     deadline = time.monotonic() + 5.0
     try:
@@ -145,7 +145,9 @@ def navigate(ip: str, source: dict[str, Any], container: dict[str, Any] | None,
             content = copy.deepcopy(content)
             content['name'] = (entry.findtext('name') or content['name'])[:160]
             content['type'] = entry.findtext('type') or content.get('type', '')
-            content['is_dir'] = content['type'] == 'dir'
+            content['is_dir'] = content['type'].lower() in {'dir', 'folder'}
+            content['is_collection'] = content['type'].lower() in {'dir', 'folder', 'playlist'}
+            content['preview_available'] = entry.get('Navigable') != '0'
             content['playable'] = entry.get('Playable') == '1'
             items.append(content)
         next_start = start + len(entries) if entries and start + len(entries) <= total else None

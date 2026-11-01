@@ -24,6 +24,7 @@
   <script src="/app-static/presets.js"></script>
   <link rel="stylesheet" href="/app-static/stations.css">
   <script src="/app-static/stations.js"></script>
+  <script src="/app-static/music.js"></script>
   <style>
     [hidden] { display: none !important; }
     #btn-cancel-operation { padding: 9px 12px; }
@@ -68,11 +69,7 @@
         <div class="header-title">Wisp</div>
         <div class="header-sub" id="hub-greeting">Good afternoon</div>
       </div>
-      <button class="icon-btn" id="btn-refresh" title="Refresh">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>
-        </svg>
-      </button>
+
     </div>
 
     <div class="scroll-body" id="hub-body">
@@ -86,10 +83,11 @@
       </details>
     </div>
 
-    <div class="thumb-bar">
+    <div class="thumb-bar hub-actions">
+      <button class="preset-action" id="btn-refresh" type="button">Refresh Speakers</button>
       <button class="btn-power btn-turn-off-all" id="btn-all-off">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
-        Turn Off All
+        Turn All Off
       </button>
     </div>
   </div>
@@ -235,11 +233,20 @@
         <label class="form-label" for="f-play-kind">What to play</label>
         <select class="form-input" id="f-play-kind" aria-controls="schedule-radio schedule-favorite schedule-preset schedule-aux">
           <option value="">Choose music…</option>
+          <option value="collection">Music library collection</option>
           <option value="radio">Radio station</option>
           <option value="favorite">Saved favorite</option>
           <option value="preset">Speaker button</option>
           <option value="aux">AUX input</option>
         </select>
+      </div>
+      <div class="form-group" id="schedule-collection" hidden>
+        <p id="collection-schedule-name"></p>
+        <label class="form-label" for="f-collection-speaker">Speaker</label>
+        <select class="form-input" id="f-collection-speaker"></select>
+        <p id="collection-schedule-help" role="status" aria-live="polite"></p>
+        <button class="preset-action" id="collection-change-music" type="button">Change music</button>
+        <button class="preset-action" id="collection-check" type="button">Check Again</button>
       </div>
       <div class="form-group" id="schedule-radio" hidden>
         <label class="form-label" for="f-station">Radio station</label>
@@ -330,17 +337,60 @@
       </div>
       <h2 class="section-label">Saved stations</h2>
       <div id="stations-list"></div>
+      <section id="stations-session" hidden aria-label="Current radio session">
+        <p id="stations-session-status" role="status" aria-live="polite"></p>
+        <button class="preset-action" id="stations-session-check" type="button">Check playback</button>
+        <button class="preset-action" id="stations-session-stop" type="button">Stop</button>
+      </section>
       <form id="stations-add-form" class="station-add">
-        <h2>Add a station</h2>
+        <h2>Add Station</h2>
         <label class="form-label" for="station-name">Station name</label>
         <input class="form-input" id="station-name" type="text" maxlength="100" required autocomplete="off">
         <label class="form-label" for="station-url">Direct audio stream URL</label>
         <input class="form-input" id="station-url" type="url" inputmode="url" maxlength="2048" required autocomplete="off" spellcheck="false" placeholder="https://radio.example/live.mp3" aria-describedby="station-url-help">
         <p class="preset-help" id="station-url-help">Use a public http or https audio stream, not a station webpage. Credentials, query parameters and fragments are not supported. Stream compatibility is not guaranteed. Wisp must stay available for playback and schedules.</p>
-        <button class="preset-action" id="stations-add" type="submit">Save station</button>
+        <p class="preset-help">Test on the selected speaker at volume 5. This may replace current playback. Listen, confirm the intended station, then Stop before Save.</p>
+        <button class="preset-action" id="station-draft-test" type="button">Test</button>
+        <button class="preset-action" id="station-draft-check" type="button" hidden>Check test status</button>
+        <button class="preset-action" id="station-draft-stop" type="button" hidden>Stop test</button>
+        <label class="preset-help"><input id="station-draft-audible" type="checkbox" disabled> I heard the intended station.</label>
+        <p id="station-draft-status" role="status" aria-live="polite"></p>
+        <button class="preset-action" id="stations-add" type="submit" disabled>Save station</button>
       </form>
     </div>
   </div>
+  <div id="view-music" class="view">
+    <div class="header"><h1 class="header-title" id="music-title" tabindex="-1">Music</h1></div>
+    <div class="scroll-body" id="music-body">
+      <div class="music-destinations"><button class="preset-action" id="music-radio" type="button">Radio</button><button class="preset-action" id="music-libraries" type="button">Music Libraries</button></div>
+      <p id="music-message" role="status" aria-live="polite"></p>
+      <div id="music-library-list"></div>
+      <button class="preset-action" id="music-add-library" type="button">Add Library</button>
+      <section id="music-discovery" hidden aria-label="Add Library">
+        <h2>Add Library</h2><p class="preset-help">Choose a library found by your speakers, then the speaker to add it to. Music files are never changed.</p>
+        <div id="music-discovered"></div><button class="preset-action" id="music-search-again" type="button">Search Again</button>
+      </section>
+      <section id="music-browser" hidden>
+        <button class="preset-action" id="music-back" type="button">Back</button>
+        <p id="music-path" class="preset-help"></p><h2 id="music-collection-name"></h2>
+        <div id="music-items"></div><button class="preset-action" id="music-more" type="button" hidden>Load more</button>
+        <button class="preset-action" id="music-retry" type="button" hidden>Retry</button>
+      </section>
+      <section class="music-review" id="music-review" hidden>
+        <h2 id="music-review-title"></h2><p id="music-review-text"></p>
+        <label class="form-label" for="music-target">Speaker</label><select class="form-input" id="music-target"></select>
+        <div id="music-slots" hidden><label class="form-label" for="music-slot">Speaker button</label><select class="form-input" id="music-slot"></select></div>
+        <div id="music-volume-field" hidden><label class="form-label" for="music-volume">Listening volume</label><input class="form-input" id="music-volume" type="number" min="0" max="100" step="1" value="10"></div>
+        <button class="preset-action" id="music-review-confirm" type="button">Continue</button><button class="preset-action" id="music-review-cancel" type="button">Cancel</button>
+      </section>
+      <section id="music-session" hidden><p id="music-session-status" role="status" aria-live="polite"></p><button class="preset-action" id="music-session-check" type="button">Check playback</button><button class="preset-action" id="music-session-stop" type="button">Stop</button></section>
+      <button class="preset-action" id="music-return-form" type="button" hidden>Cancel music change</button>
+    </div>
+    <section id="music-actions" class="music-actions" hidden aria-label="Inspected collection actions">
+      <p id="music-actions-label"></p><div><button class="preset-action" id="music-play" type="button">Play</button><button class="preset-action" id="music-schedule" type="button">Schedule</button><button class="preset-action" id="music-assign" type="button">Assign</button></div><p id="music-actions-help" class="preset-help"></p>
+    </section>
+  </div>
+  <nav class="phone-dock" aria-label="Main navigation"><button id="dock-speakers" type="button" aria-current="page">Speakers</button><button id="dock-music" type="button">Music</button></nav>
 </div><!-- #app -->
 
 <!-- ─── Overlays / Sheets ──────────────────────────────────────────── -->
@@ -393,6 +443,11 @@ let fadeOut = 1;               // minutes
 let selectedPreset = 1;        // 1-6 or "AUX"
 let nameAutoManaged = true;    // whether name tracks on-time
 let allSchedules    = {};      // {speakerName: [schedules]}
+let collectionChoice = null;
+let collectionReady = false;
+let changingMusic = false;
+let collectionValidation = 0;
+let editingOrigin = null; // Immutable source of an existing routine while its target changes.
 let editingSchedule = null;    // null or the schedule object being edited
 let scheduleRuntime = {};
 let latestOperation = null;
@@ -427,12 +482,16 @@ const views = {
   speaker: document.getElementById('view-speaker'),
   form:    document.getElementById('view-form'),
   stations: document.getElementById('view-stations'),
+  music: document.getElementById('view-music'),
 };
 
 function showView(name) {
   if (window.wispPresets) window.wispPresets.onViewChange(name);
   if (window.wispStations) window.wispStations.onViewChange(name);
+  if (window.wispMusic) window.wispMusic.onViewChange(name);
   activeView = name;
+  document.getElementById('dock-speakers').setAttribute('aria-current', ['hub','speaker','form'].includes(name) ? 'page' : 'false');
+  document.getElementById('dock-music').setAttribute('aria-current', ['music','stations'].includes(name) ? 'page' : 'false');
   clearTimeout(playbackRefreshTimer);
   playbackRefreshGeneration += 1;
   Object.values(views).forEach(v => v.classList.remove('active'));
@@ -782,7 +841,7 @@ function renderSchedules() {
     const isPaused = !!s.paused;
     const days = formatDays(s.days || []);
     const vol  = s.volume != null ? `Vol ${s.volume}` : '';
-    const pre  = s.station_id ? 'Saved station' : s.preset  != null ? `Preset ${s.preset}` : (s.source || '');
+    const pre  = s.collection ? (s.collection.content?.name || 'Music library collection') : s.station_id ? 'Saved station' : s.preset  != null ? `Preset ${s.preset}` : (s.source || '');
     const meta = [days, `${s.on_time}–${s.off_time}`, vol, pre].filter(Boolean).join(' · ');
 
     const card = document.createElement('div');
@@ -859,8 +918,10 @@ async function pauseSchedule(name) {
 
 async function resumeSchedule(name) {
   const speaker = currentSpeaker;
+  const schedule = currentSchedules.find(item => item.name === name);
+  if (schedule?.review_reason && !window.confirm(`Review required: ${reviewReasonText(schedule.review_reason)} Confirm the selected music and speaker are correct before re-enabling this routine. Use Edit / Change music if they are not.`)) return;
   try {
-    await requestJson(`/api/${encodeURIComponent(speaker)}/schedules/${encodeURIComponent(name)}/resume`, {method:'PATCH'});
+    await requestJson(`/api/${encodeURIComponent(speaker)}/schedules/${encodeURIComponent(name)}/resume`, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({reviewed:!!schedule?.review_reason,review_token:schedule?.review_token})});
     if (speaker !== currentSpeaker) return;
     const s = currentSchedules.find(x => x.name === name);
     if (s) s.paused = false;
@@ -988,6 +1049,7 @@ function openAddForm() {
 
 function openForm(data = null) {
   editingSchedule = data;
+  editingOrigin = data ? {speaker:currentSpeaker,speaker_id:data.speaker_id || data.collection?.speaker_id,collection:data.collection ? JSON.parse(JSON.stringify(data.collection)) : null} : null;
   nameAutoManaged = !data;
   
   const title = document.getElementById('form-title');
@@ -1003,8 +1065,8 @@ function openForm(data = null) {
     document.getElementById('f-volume').value = data.volume;
     document.getElementById('vol-display').textContent = data.volume;
     
-    fadeIn  = (data.fade_in_duration  || 300) / 60;
-    fadeOut = (data.fade_out_duration || 60)  / 60;
+    fadeIn  = (data.fade_in_duration ?? 300) / 60;
+    fadeOut = (data.fade_out_duration ?? 60) / 60;
     document.getElementById('fade-in-display').textContent  = `${fadeIn} min`;
     document.getElementById('fade-out-display').textContent = `${fadeOut} min`;
 
@@ -1044,8 +1106,13 @@ function openForm(data = null) {
     setSelectedPreset(1);
   }
 
+  collectionChoice = data?.collection || null;
+  collectionReady = false;
+  changingMusic = false;
+  renderCollectionChoice();
+  if (collectionChoice) checkCollectionChoice();
   document.getElementById('form-back-label').textContent = currentSpeaker;
-  setPlayKind(data?.station_id ? 'radio' : data?.favorite_id ? 'favorite' : data?.source === 'AUX' ? 'aux' : data ? 'preset' : '');
+  setPlayKind(data?.collection ? 'collection' : data?.station_id ? 'radio' : data?.favorite_id ? 'favorite' : data?.source === 'AUX' ? 'aux' : data ? 'preset' : '');
   showView('form');
   if (window.wispPresets) window.wispPresets.loadSchedule(currentSpeaker, data ? data.favorite_id : null);
   if (window.wispStations) window.wispStations.loadSchedule(data ? data.station_id : null);
@@ -1132,8 +1199,9 @@ document.querySelectorAll('.stepper-btn').forEach(btn => {
 
 /* Only the chosen source participates in a schedule. Hidden draft choices stay local. */
 function setPlayKind(kind) {
+  if (kind !== 'collection') collectionValidation += 1;
   document.getElementById('f-play-kind').value = kind;
-  for (const name of ['radio', 'favorite', 'preset', 'aux']) {
+  for (const name of ['collection', 'radio', 'favorite', 'preset', 'aux']) {
     document.getElementById(`schedule-${name}`).hidden = kind !== name;
   }
   validateForm();
@@ -1142,13 +1210,14 @@ function scheduleSource() {
   const kind = document.getElementById('f-play-kind').value;
   const station = kind === 'radio' ? document.getElementById('f-station').value : null;
   const favorite = kind === 'favorite' ? document.getElementById('f-favorite').value : null;
-  return {station_id: station || null, favorite_id: favorite || null,
+  if (kind === 'collection') return {collection: collectionChoice, source_kind:'collection'};
+  return {collection:null, station_id: station || null, favorite_id: favorite || null,
     preset: kind === 'preset' ? (selectedPreset === 'AUX' ? null : selectedPreset) : null,
     source: kind === 'aux' ? 'AUX' : null};
 }
 function hasScheduleSource() {
   const choice = scheduleSource();
-  return !!(choice.station_id || choice.favorite_id || choice.preset || choice.source);
+  return !!((choice.collection && collectionReady) || choice.station_id || choice.favorite_id || choice.preset || choice.source);
 }
 document.getElementById('f-play-kind').addEventListener('change', event => setPlayKind(event.target.value));
 document.getElementById('f-station').addEventListener('change', validateForm);
@@ -1177,7 +1246,10 @@ document.getElementById('btn-save').addEventListener('click', async () => {
   const payload = {
     name,
     previous_name: editingSchedule ? editingSchedule.name : null,
-    speaker_id: (document.getElementById('f-play-kind').value === 'favorite' ? window.wispPresets?.scheduleBinding()?.speaker_id : null) || (editingSchedule ? editingSchedule.speaker_id : undefined),
+    previous_speaker: editingOrigin?.speaker,
+    previous_speaker_id: editingOrigin?.speaker_id,
+    previous_collection: editingOrigin?.collection || undefined,
+    speaker_id: (document.getElementById('f-play-kind').value === 'collection' ? collectionChoice?.speaker_id : null) || (document.getElementById('f-play-kind').value === 'favorite' ? window.wispPresets?.scheduleBinding()?.speaker_id : null) || (editingSchedule && currentSpeaker === editingOrigin?.speaker ? editingSchedule.speaker_id : undefined),
     ...scheduleSource(),
     days,
     on_time:          onTime,
@@ -1186,6 +1258,7 @@ document.getElementById('btn-save').addEventListener('click', async () => {
     fade_in_duration:  fadeIn  * 60,
     fade_out_duration: fadeOut * 60,
     paused: editingSchedule ? editingSchedule.paused : false,
+    review_token: editingSchedule?.review_token,
   };
 
   try {
@@ -1202,7 +1275,7 @@ document.getElementById('btn-save').addEventListener('click', async () => {
     } else {
       let problem;
       try { problem = await res.json(); } catch (_) { problem = {}; }
-      toast(problem.errors?.station_id || problem.error || 'Could not save — check inputs');
+      toast(problem.errors?.collection || problem.errors?.playback || problem.errors?.station_id || problem.error || 'Could not save — check inputs');
     }
   } catch { toast('Network error'); }
   finally {
@@ -1215,7 +1288,7 @@ document.getElementById('btn-save').addEventListener('click', async () => {
 document.getElementById('btn-refresh').addEventListener('click', () => loadHub(true));
 document.getElementById('btn-back-hub').addEventListener('click', loadHub);
 document.getElementById('btn-back-speaker').addEventListener('click', () => {
-  showView('speaker');
+  openSpeaker(editingOrigin?.speaker || currentSpeaker);
 });
 document.getElementById('btn-add-schedule').addEventListener('click', openAddForm);
 
@@ -1246,23 +1319,35 @@ if (window.WispPresetUI) {
   });
 }
 
+function scheduleStation(station, speaker) {
+  const preserve = changingMusic;
+  if (preserve) {
+    currentSpeaker = speaker;
+    collectionChoice = null;
+    collectionReady = false;
+    document.getElementById('form-back-label').textContent = speaker;
+  } else {
+    openSpeaker(speaker);
+    openForm();
+  }
+  setPlayKind('radio');
+  window.wispStations.loadSchedule(station.id);
+  changingMusic = false;
+  showView('form');
+  validateForm();
+}
+
 if (window.WispStationUI) {
   window.wispStations = window.WispStationUI.create({
     document, fetch: (...args) => fetch(...args),
     getSpeakers: () => discoveredSpeakers,
     getSpeaker: () => currentSpeaker,
     navigate: showView,
-    back: origin => { if (origin === 'speaker' && currentSpeaker) showView('speaker'); else loadHub(); },
-    schedule: (station, speaker) => {
-      openSpeaker(speaker);
-      openForm();
-      setPlayKind('radio');
-      window.wispStations.loadSchedule(station.id);
-    },
+    back: origin => { if (origin === 'music') { window.wispMusic.open(); return; } if (origin === 'speaker' && currentSpeaker) showView('speaker'); else loadHub(); },
+    schedule: scheduleStation,
     onStationSelected: () => validateForm(),
     clearFavorite: () => {},
     onPlay: (result, speaker, options = {}) => {
-      openSpeaker(speaker);
       latestOperation = result.operation || null;
       renderOperation(latestOperation);
       toast(options.direct ? 'Experimental test requested; keep physical Stop nearby' : options.listening ? 'Radio requested; waiting for speaker confirmation' : 'Quiet playback requested; listen to confirm sound');
@@ -1271,6 +1356,57 @@ if (window.WispStationUI) {
 }
 
 /* ─── Boot ───────────────────────────────────────────────────────── */
+function reviewReasonText(reason) {
+  if (String(reason).includes('button')) return 'A speaker button was replaced. Review its current music before re-enabling.';
+  if (String(reason).includes('library')) return 'The music library registration changed. Review or replace the selected music before re-enabling.';
+  return 'Review the selected music and speaker before re-enabling this routine.';
+}
+function renderCollectionChoice() {
+  const select = document.getElementById('f-collection-speaker');
+  select.replaceChildren();
+  discoveredSpeakers.forEach(speaker => { const option = document.createElement('option'); option.value = speaker.name; option.textContent = speaker.name; select.append(option); });
+  if (currentSpeaker && !discoveredSpeakers.some(speaker => speaker.name === currentSpeaker)) { const option = document.createElement('option'); option.value = currentSpeaker; option.textContent = currentSpeaker; select.append(option); }
+  select.value = currentSpeaker || '';
+  document.getElementById('collection-schedule-name').textContent = collectionChoice ? `${collectionChoice.content?.name || 'Collection'} · ${collectionChoice.library_name || window.wispMusic?.libraryName?.(collectionChoice.library_id) || 'Music Library'}` : 'Choose a folder or playlist.';
+  document.getElementById('collection-schedule-help').textContent = collectionChoice ? 'Checking target access. Other schedule settings are retained.' : 'Change music to browse a library.';
+}
+async function checkCollectionChoice() {
+  const binding = collectionChoice;
+  const speaker = document.getElementById('f-collection-speaker').value;
+  const ticket = ++collectionValidation;
+  collectionReady = false; validateForm();
+  if (!binding || !speaker) return;
+  try {
+    const result = await requestJson('/api/collections/resolve', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({speaker,collection:binding})});
+    if (ticket !== collectionValidation || collectionChoice !== binding || activeView !== 'form' || document.getElementById('f-play-kind').value !== 'collection' || document.getElementById('f-collection-speaker').value !== speaker) return;
+    collectionChoice = result.collection; collectionReady = true; currentSpeaker = speaker;
+    document.getElementById('form-back-label').textContent = speaker;
+    document.getElementById('collection-schedule-help').textContent = `Available on ${speaker}. Save does not play music or assign a button.`;
+  } catch (error) { if (ticket === collectionValidation) document.getElementById('collection-schedule-help').textContent = `Unavailable: ${error.message} Replace music or Check Again; all other settings are kept.`; }
+  finally { if (ticket === collectionValidation) validateForm(); }
+}
+document.getElementById('f-collection-speaker').addEventListener('change', checkCollectionChoice);
+document.getElementById('collection-check').addEventListener('click', checkCollectionChoice);
+document.getElementById('collection-change-music').addEventListener('click', () => { changingMusic = true; window.wispMusic.open(true); });
+if (window.WispMusicUI) {
+  window.wispMusic = window.WispMusicUI.create({document,fetch:(...args)=>fetch(...args),navigate:showView,getSpeakers:()=>discoveredSpeakers,getSpeaker:()=>currentSpeaker,
+    radio:()=>window.wispStations.open('music'),
+    cancelSchedule:()=>{showView('form');changingMusic=false;validateForm();},
+    schedule:(binding,speaker)=>{
+      const preserve = changingMusic;
+      currentSpeaker = speaker;
+      if (!preserve) openForm();
+      collectionChoice=binding;collectionReady=true;changingMusic=false;
+      renderCollectionChoice();
+      if (!preserve) { document.getElementById('f-name').value=binding.content?.name || 'Music'; nameAutoManaged=false; }
+      document.getElementById('collection-schedule-help').textContent=`Available on ${speaker}. Save does not play or assign.`;
+      setPlayKind('collection');showView('form');validateForm();
+    },
+  });
+}
+document.getElementById('dock-speakers').addEventListener('click',()=>loadHub());
+document.getElementById('dock-music').addEventListener('click',()=>window.wispMusic.open());
+
 let bootStarted = false;
 
 async function bootApp() {

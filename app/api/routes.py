@@ -1,4 +1,5 @@
 import re
+import copy
 import logging
 import math
 from typing import Any, Mapping
@@ -66,7 +67,17 @@ def _to_schedule(payload: Mapping[str, Any]) -> Schedule:
     schedule["station_id"] = str(payload["station_id"])
   if payload.get("favorite_id"):
     schedule["favorite_id"] = str(payload["favorite_id"])
-  if not payload.get("station_id"):
+  if "collection" in payload:
+    schedule["collection"] = copy.deepcopy(payload["collection"])
+  if "source_kind" in payload:
+    schedule["source_kind"] = payload["source_kind"]
+  if "source_error" in payload:
+    schedule["source_error"] = payload["source_error"]
+  if "review_reason" in payload:
+    schedule["review_reason"] = payload["review_reason"]
+  if "review_token" in payload:
+    schedule["review_token"] = payload["review_token"]
+  if not payload.get("station_id") and "collection" not in payload:
     schedule["preset"] = payload.get("preset")
     schedule["source"] = payload.get("source")
   return schedule
@@ -142,14 +153,41 @@ def _validate_schedule_payload(data: Any) -> tuple[SchedulePayload | None, dict[
     else:
       normalized["favorite_id"] = data["favorite_id"]
 
+  collection_requested = data.get("collection") is not None or data.get("source_kind") == "collection"
+  if data.get("source_kind") not in (None, "", "collection", "station", "favorite", "preset", "aux"):
+    errors["source_kind"] = "Unsupported music source. Choose the music again."
+  if any(key.startswith("collection") and key != "collection" for key in data):
+    errors["collection"] = "Unsupported collection fields. Choose the collection again."
+  if collection_requested:
+    if data.get("source_kind") not in (None, "", "collection"):
+      errors["source_kind"] = "Collection conflicts with the selected music source mode."
+    from app.core import collections
+    try:
+      normalized["collection"] = collections.validate_binding(data.get("collection"))
+      normalized["source_kind"] = "collection"
+      normalized["speaker_id"] = normalized["collection"]["speaker_id"]
+      if data.get("speaker_id") not in (None, normalized["speaker_id"]):
+        errors["speaker_id"] = "Collection speaker changed. Choose the music again."
+    except (ValueError, TypeError, KeyError) as exc:
+      errors["collection"] = str(exc) or "Choose a valid collection."
+  elif data.get("source_kind") == "station" and not data.get("station_id"):
+    errors["station_id"] = "Choose a station."
+  elif data.get("source_kind") == "favorite" and not data.get("favorite_id"):
+    errors["favorite_id"] = "Choose a favorite."
+  elif data.get("source_kind") == "preset" and data.get("preset") in (None, ""):
+    errors["preset"] = "Choose a speaker button."
+  elif data.get("source_kind") == "aux" and str(data.get("source", "")).upper() != "AUX":
+    errors["source"] = "Choose AUX."
+
   explicit_kinds = [
+    collection_requested,
     bool(data.get("station_id")),
     bool(data.get("favorite_id")),
     data.get("preset") not in ("", None),
     data.get("source") not in ("", None),
   ]
   if sum(explicit_kinds) > 1:
-    errors["playback"] = "Choose exactly one station, favorite, speaker button, or AUX input."
+    errors["playback"] = "Choose exactly one collection, station, favorite, speaker button, or AUX input."
 
   previous_name = data.get("previous_name")
   if previous_name in (None, ""):
@@ -158,6 +196,14 @@ def _validate_schedule_payload(data: Any) -> tuple[SchedulePayload | None, dict[
     errors["previous_name"] = "'previous_name' must be a non-empty string when provided."
   else:
     normalized["previous_name"] = previous_name.strip()
+
+  previous_speaker = data.get("previous_speaker")
+  if previous_speaker in (None, ""):
+    normalized["previous_speaker"] = None
+  elif not isinstance(previous_speaker, str) or not previous_speaker.strip():
+    errors["previous_speaker"] = "The original routine speaker must be a non-empty name."
+  else:
+    normalized["previous_speaker"] = previous_speaker.strip()
 
   days = data.get("days")
   if not isinstance(days, list) or not days:
@@ -201,7 +247,7 @@ def _validate_schedule_payload(data: Any) -> tuple[SchedulePayload | None, dict[
   else:
     preset = _coerce_int(preset, "preset", errors, minimum=1, maximum=6)
 
-  if data.get("station_id") or data.get("favorite_id"):
+  if data.get("station_id") or data.get("favorite_id") or collection_requested:
     source = None
     preset = None
   else:
@@ -329,21 +375,84 @@ def api_add_schedule(speaker_name: str) -> tuple[Any, int]:
     assert normalized is not None
 
     previous_name = normalized.get("previous_name") or normalized["name"]
-    existing = next((item for item in jobs.get_current_config().get(speaker_name, [])
-                     if item.get("name") == previous_name), None)
+    origin_speaker = normalized.get("previous_speaker") or speaker_name
+    moving = origin_speaker != speaker_name
+    config = jobs.get_current_config()
+    originals = [item for item in config.get(origin_speaker, []) if item.get("name") == previous_name]
+    existing = originals[0] if len(originals) == 1 else None
+    origin_revision = jobs.schedule_revision(existing) if existing is not None and "collection" in existing else None
+    if moving:
+      if not normalized.get("previous_name") or existing is None:
+        return jsonify(error="The original routine was not found uniquely. Refresh and edit it again."), 409
+      original_collection = existing.get("collection")
+      if (not isinstance(original_collection, dict)
+          or existing.get("speaker_id") != original_collection.get("speaker_id")
+          or data.get("previous_speaker_id") != existing.get("speaker_id")
+          or data.get("previous_collection") != original_collection):
+        return jsonify(error="Only a verified existing collection routine can move speakers. Refresh its original music and choose the target again."), 409
+      if any(item.get("name") == normalized["name"] for item in config.get(speaker_name, [])):
+        return jsonify(error="The target speaker already has a routine with this name. Choose another name; no routine was replaced."), 409
+      explicit_target = (data.get("collection") is not None or bool(data.get("station_id"))
+                         or bool(data.get("favorite_id")) or data.get("preset") not in (None, "")
+                         or data.get("source") not in (None, ""))
+      if not explicit_target:
+        return jsonify(error="Choose and verify the target music before moving this routine."), 400
+      origin_revision = jobs.schedule_revision(existing)
+    # Preserve durable collection intent in old-client edits; source replacement is explicit.
+    if existing and "collection" in existing and isinstance(data, dict) and "collection" not in data:
+      if data.get("replace_source") is not True and not ("collection" in data and data["collection"] is None):
+        if any(data.get(key) not in (None, "") for key in ("station_id", "favorite_id", "preset", "source")):
+          return jsonify({"errors": {"collection": "Use Change music to replace this collection."}}), 400
+        normalized["collection"] = copy.deepcopy(existing["collection"])
+        normalized["source_kind"] = "collection"
+        saved_collection = existing.get("collection")
+        prior_id = existing.get("speaker_id") or (saved_collection.get("speaker_id") if isinstance(saved_collection, dict) else None)
+        if not isinstance(prior_id, str) or not prior_id:
+          return jsonify(error="The saved collection identity is unavailable. Use Replace music."), 400
+        normalized["speaker_id"] = prior_id
+        normalized.pop("preset", None)
+        normalized.pop("source", None)
+    if existing and existing.get("review_reason"):
+      normalized["review_reason"] = existing["review_reason"]
+      if existing.get("review_token"):
+        normalized["review_token"] = existing["review_token"]
+      normalized["paused"] = True
+      if isinstance(data, dict) and data.get("reviewed") is True and data.get("paused") is False:
+        if data.get("review_token") != existing.get("review_token"):
+          return jsonify(error="The music changed again. Refresh and review the current pause."), 409
+        normalized.pop("review_token", None)
+        normalized.pop("review_reason", None)
+        normalized["paused"] = False
+    if "collection" in normalized:
+      if normalized.get("station_id") or normalized.get("favorite_id"):
+        return jsonify({"errors": {"collection": "Choose one source only."}}), 400
+      try:
+        from app.core import collections
+        binding = collections.validate_binding(normalized["collection"], speaker_name)
+        if normalized.get("speaker_id") != binding["speaker_id"]:
+          raise ValueError("Collection speaker changed. Choose music on the target speaker again.")
+        if moving or not normalized.get("paused"):
+          collections.resolve(binding, speaker_name)
+        normalized["collection"] = binding
+      except (ValueError, TypeError, KeyError) as exc:
+        return jsonify({"errors": {"collection": str(exc)}}), 400
+      normalized.pop("preset", None)
+      normalized.pop("source", None)
     # Older clients omit favorite_id; do not silently remove protection on edit.
-    if isinstance(data, dict) and "favorite_id" not in data and existing and existing.get("favorite_id"):
+    if isinstance(data, dict) and "favorite_id" not in data and existing and existing.get("favorite_id") and data.get("replace_source") is not True and "collection" not in data:
       normalized["favorite_id"] = existing["favorite_id"]
-    if isinstance(data, dict) and "station_id" not in data and existing and existing.get("station_id"):
+    if isinstance(data, dict) and "station_id" not in data and existing and existing.get("station_id") and data.get("replace_source") is not True and "collection" not in data:
       normalized["station_id"] = existing["station_id"]
     if normalized.get("station_id") and normalized.get("favorite_id"):
       return jsonify({"errors": {"station_id": "Choose a station or a preset favorite, not both."}}), 400
     if normalized.get("station_id"):
       try:
         station = favorites.station(normalized["station_id"], allow_removed=bool(existing and existing.get("station_id") == normalized["station_id"]))
-        pinned_id = existing.get("speaker_id") if existing else normalized.get("speaker_id")
+        if station.get("draft"):
+          raise favorites.FavoriteError("Finish testing and save this station before scheduling it.")
+        pinned_id = normalized.get("speaker_id") if moving else (existing.get("speaker_id") if existing else normalized.get("speaker_id"))
         found = favorites.device(speaker_name, pinned_id)
-        if not normalized.get("paused"):
+        if moving or not normalized.get("paused"):
           from app.core import radio_relay
           ready = radio_relay.readiness(station['url'], found['ip'])
           if not ready['available']:
@@ -364,6 +473,13 @@ def api_add_schedule(speaker_name: str) -> tuple[Any, int]:
       normalized.pop("station_id", None)
       normalized["source"] = None
 
+    if moving and "collection" not in normalized and not normalized.get("station_id") and not normalized.get("favorite_id"):
+      try:
+        target = favorites.device(speaker_name, normalized.get("speaker_id"))
+        normalized["speaker_id"] = target["device_id"]
+      except ValueError as exc:
+        return jsonify({"errors": {"speaker_id": str(exc)}}), 400
+
     # Editing a legacy client payload must not silently drop an existing identity binding.
     if "speaker_id" not in normalized:
       previous_name = normalized.get("previous_name") or normalized["name"]
@@ -373,10 +489,14 @@ def api_add_schedule(speaker_name: str) -> tuple[Any, int]:
         normalized["speaker_id"] = existing["speaker_id"]
         
     jobs.config_queue.put(ConfigMutation(
-        action="add_update",
+        action="move_collection" if moving else "add_update",
         speaker=speaker_name,
+        previous_speaker=origin_speaker if moving else None,
+        expected_origin_revision=origin_revision or "",
         schedule_name=normalized["name"],
         previous_name=normalized.get("previous_name"),
+        review_confirmed=isinstance(data, dict) and data.get("reviewed") is True,
+        expected_review_token=data.get("review_token") if isinstance(data, dict) else None,
         data=_to_schedule(normalized),
     ))
 
@@ -495,8 +615,23 @@ def api_resume_schedule(speaker_name: str, schedule_name: str) -> tuple[Any, int
         return jsonify({"error": f"Schedule '{schedule_name}' not found for speaker '{speaker_name}'"}), 404
 
     updated = _to_schedule(dict(target))
+    if target.get("review_reason"):
+      data = request.get_json(silent=True) or {}
+      if data.get("reviewed") is not True or data.get("review_token") != target.get("review_token"):
+        return jsonify(error="Review the changed music and explicitly re-enable this routine.",
+                       reason=target["review_reason"]), 409
+      updated.pop("review_reason", None)
+      updated.pop("review_token", None)
+    if "collection" in target:
+      try:
+        from app.core import collections
+        collections.resolve(target["collection"], speaker_name)
+      except (ValueError, TypeError, KeyError) as exc:
+        return jsonify(error=str(exc)), 400
     updated["paused"] = False
     jobs.config_queue.put(ConfigMutation(
+      review_confirmed=bool(target.get("review_reason") and request.get_json(silent=True) and request.get_json(silent=True).get("reviewed") is True),
+      expected_review_token=target.get("review_token"),
       action="add_update",
       speaker=speaker_name,
       schedule_name=schedule_name,
@@ -550,7 +685,16 @@ def api_trigger_schedule(speaker_name: str, schedule_name: str) -> tuple[Any, in
 @api_bp.route("/api/<speaker_name>/operations", methods=["GET"])
 def api_operations(speaker_name: str) -> Any:
     """Read the latest operation even when the speaker is unavailable."""
-    return jsonify({"speaker": speaker_name, "last_outcome": _public_state(jobs.get_last_outcome(speaker_name))})
+    outcome = jobs.get_last_outcome(speaker_name)
+    if (outcome and outcome.get("state") == "unknown"
+        and outcome.get("listening_session") is True
+        and all(isinstance(outcome.get(key), str) and outcome[key]
+                for key in ("speaker_id", "station_id", "operation_id"))):
+      from app.core import playback
+      playback.reconcile_station_session(speaker_name, outcome["speaker_id"],
+                                         outcome["station_id"], outcome["operation_id"])
+      outcome = jobs.get_last_outcome(speaker_name)
+    return jsonify({"speaker": speaker_name, "last_outcome": _public_state(outcome)})
 
 
 @api_bp.route("/api/<speaker_name>/schedules/runtime", methods=["GET"])

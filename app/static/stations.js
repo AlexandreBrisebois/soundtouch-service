@@ -15,6 +15,7 @@
     let scheduleGeneration = 0, scheduleController = null;
     let testGeneration = 0, testController = null;
     let readinessGeneration = 0, readinessController = null;
+    let draft = null, draftOperation = null, draftURL = null, draftStopped = false, draftBusy = false, draftPoll = null, radioSession = null, sessionPoll = null;
     const message = value => { el('stations-message').textContent = value; };
     function node(tag, value, className) {
       const item = doc.createElement(tag); item.textContent = value;
@@ -27,11 +28,17 @@
     }
     function post(body) { return {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}; }
     async function request(url, options) {
-      const response = await deps.fetch(url, options);
-      let body;
-      try { body = await response.json(); } catch (_) { throw new Error('Wisp could not read the response.'); }
-      if (!response.ok) throw new Error(body.error || body.message || 'The request could not be completed.');
-      return body;
+      const deadline=new AbortController(),signal=options?.signal;
+      const cancel=()=>deadline.abort();signal?.addEventListener('abort',cancel,{once:true});if(signal?.aborted)deadline.abort();
+      let timedOut=false;const timeout=setTimeout(()=>{timedOut=true;deadline.abort();},45000);timeout.unref?.();
+      try {
+        const response = await deps.fetch(url, {...options,signal:deadline.signal});
+        let body;
+        try { body = await response.json(); } catch (_) { throw new Error('Wisp could not read the response.'); }
+        if (!response.ok) throw new Error(body.error || body.message || 'The request could not be completed.');
+        return body;
+      } catch(error){if(timedOut)throw new Error('Request timed out. Check status before retrying a change.');throw error;}
+      finally{clearTimeout(timeout);signal?.removeEventListener('abort',cancel);}
     }
     function clearConfirmation(restoreFocus = false) {
       testGeneration += 1; if (testController) testController.abort();
@@ -41,7 +48,9 @@
       if (restoreFocus && previous && previous.trigger && previous.trigger.isConnected) previous.trigger.focus();
     }
     function setBusy() {
-      el('stations-add').disabled = writing;
+      el('stations-add').disabled = writing || draftBusy || !draftStopped || !el('station-draft-audible').checked || draftURL!==el('station-url').value.trim();
+      el('station-draft-test').disabled = writing || draftBusy;
+      el('station-draft-stop').disabled = draftBusy;
       el('stations-refresh').disabled = writing;
       el('stations-speaker').disabled = writing;
       el('stations-confirm').disabled = writing || (confirmation?.kind === 'direct' && !el('stations-accept-risk').checked);
@@ -226,7 +235,7 @@
     }
     function open(from = 'hub') {
       origin = from; deps.navigate('stations'); active = true;
-      el('stations-back-label').textContent = from === 'speaker' ? (deps.getSpeaker() || 'Speaker') : 'Speakers';
+      el('stations-back-label').textContent = from === 'speaker' ? (deps.getSpeaker() || 'Speaker') : from === 'music' ? 'Music' : 'Speakers';
       const speakers = deps.getSpeakers(); const selected = deps.getSpeaker();
       const select = el('stations-speaker'); select.replaceChildren();
       const empty = node('option', 'Choose a speaker'); empty.value = ''; select.append(empty);
@@ -238,6 +247,7 @@
     }
     function close() {
       closeMenu(); active = false; generation += 1; if (controller) controller.abort(); clearConfirmation();
+      if (draftPoll) clearTimeout(draftPoll); if (sessionPoll) clearTimeout(sessionPoll);
     }
     async function add(event) {
       if (event) event.preventDefault();
@@ -245,23 +255,15 @@
       const name = el('station-name').value.trim(), url = el('station-url').value.trim();
       if (!name) { message('Give this station a name.'); el('station-name').focus(); return; }
       if (!validStream(url)) { message('Use a direct http or https stream without credentials, query parameters or a fragment.'); el('station-url').focus(); return; }
+      if (!draft || draftURL !== url || !draftOperation || !draftStopped || !el('station-draft-audible').checked) { message('Test this URL, confirm hearing the intended station, and Stop before Save.'); return; }
       const ticket = ++generation;
-      if (controller) controller.abort();
-      clearConfirmation(); writing = true; setBusy(); message('Saving station…');
+      writing = true; setBusy(); message('Saving tested station.');
       try {
-        await request('/api/stations', post({name, url}));
-        if (active && ticket === generation) { el('station-name').value = ''; el('station-url').value = ''; }
-      } catch (error) {
-        if (active && ticket === generation) message(`${error.message} Refresh the library before retrying; the station may have been saved.`);
-        return;
-      } finally {
-        writing = false; setBusy();
-        if (active && ticket !== generation) message('The earlier save finished. Refresh to check your station library before retrying.');
-      }
-      if (active && ticket === generation) {
-        if (await refresh()) message('Station saved. No playback or preset was changed.');
-      }
-      else if (active) message('The earlier save finished. Refresh to check your station library.');
+        await request(`/api/station-drafts/${encodeURIComponent(draft.id)}/save`, post({name,url,audible_confirmed:true,operation_id:draftOperation.operation_id}));
+        if (active && ticket === generation) { el('station-name').value='';el('station-url').value='';resetDraft(); }
+      } catch(error) { if(active && ticket===generation)message(`${error.message} Fields retained. Check the library before another save if the response was uncertain.`);return; }
+      finally { writing=false;setBusy(); }
+      if(active && ticket===generation && await refresh())message('Station saved. No playback or preset was changed.');
     }
     async function confirm() {
       if (!confirmation || writing || !active) return;
@@ -289,7 +291,9 @@
           message('Station removed from the library. Existing presets, schedules and current audio stay intact.');
         } else {
           message(chosen.kind === 'direct' ? 'Experimental test requested, not confirmed playing. Keep physical Stop within reach; closing this page does not stop radio.' : chosen.kind === 'listen' ? 'Radio requested. Waiting for speaker confirmation.' : 'Quiet playback requested. Listen to confirm sound; acceptance is not proof of playback.');
-          deps.onPlay(result, chosen.speaker, {direct: chosen.kind === 'direct', listening:chosen.kind === 'listen'});
+          radioSession={speaker:chosen.speaker,speaker_id:chosen.speaker_id || result.operation?.speaker_id,station:chosen.station,operation:result.operation,direct:chosen.kind==='direct'};
+          renderSession();pollSessionSoon();
+          if(deps.onPlay)deps.onPlay(result, chosen.speaker, {direct: chosen.kind === 'direct', listening:chosen.kind === 'listen'});
         }
       } catch (error) {
         if (active && ticket === generation) message(`${error.message} ${chosen.kind !== 'remove' ? 'Playback may have started. Check the speaker before retrying.' : 'Removal may have completed. Refresh before retrying.'}`);
@@ -339,6 +343,71 @@
         if (ticket === scheduleGeneration) el('station-schedule-help').textContent = 'Station library could not be checked. Any existing station binding is retained. Retry before changing it.';
       } finally { if (ticket === scheduleGeneration) select.disabled = false; }
     }
+    function resetDraft() {
+      draft=null;draftURL=null;draftOperation=null;draftStopped=false;
+      el('station-draft-audible').checked=false;el('station-draft-audible').disabled=true;
+      el('station-draft-check').hidden=true;el('station-draft-stop').hidden=true;
+      el('station-draft-status').textContent='Test before Save. Reported Playing is not proof of audible sound.';
+      if(draftPoll)clearTimeout(draftPoll);setBusy();
+    }
+    function draftMessage(text){el('station-draft-status').textContent=text;}
+    async function testDraft() {
+      if(!active || writing || draftBusy)return;
+      const name=el('station-name').value.trim(),url=el('station-url').value.trim(),speaker=el('stations-speaker').value;
+      if(!name || !validStream(url)){draftMessage('Enter a name and valid direct stream URL.');return;}
+      if(!speaker){draftMessage('Choose the test speaker above.');return;}
+      if(draft && !draft.stopped_verified && !draft.retry_ready && !['untested','failed','canceled','skipped'].includes(draft.state)){draftMessage('Stop/check the previous test before another test.');return;}
+      const originURL=url;draftBusy=true;setBusy();draftMessage(`Testing ${name} on ${speaker} at volume 5. This may replace current audio.`);
+      try {
+        const created=await request('/api/station-drafts',post({name,url}));
+        draft=created.draft;draftURL=originURL;
+        const target=deps.getSpeakers().find(item=>item.name===speaker);
+        // Backend resolves/verifies identity authoritatively. Discovery may omit it;
+        // read the existing discovery snapshot rather than infer an ID from the name.
+        let speakerId=target?.device_id || target?.speaker_id;
+        if(!speakerId){const observed=await request('/api/discover');const records=Array.isArray(observed)?observed:(observed.speakers || []);speakerId=records.find(item=>item.name===speaker)?.device_id;}
+        if(!speakerId)throw new Error('Speaker identity unavailable. Refresh Speakers before testing.');
+        draft.state='test_unknown';
+        const result=await request(`/api/station-drafts/${encodeURIComponent(draft.id)}/test`,post({speaker,speaker_id:speakerId,confirmed:true}));
+        draft={...draft,...result.draft,speaker,speaker_id:speakerId};draftOperation=result.operation;draftStopped=false;
+        if(el('station-url').value.trim()!==originURL){draftMessage('URL changed while the test started. The previous URL may be playing; Stop this test before testing the edited URL.');}
+        else draftMessage(`Test requested on ${speaker}. Waiting for matching playback; listen before confirming sound.`);
+        el('station-draft-check').hidden=false;el('station-draft-stop').hidden=false;pollDraftSoon();
+      } catch(error){draftMessage(`${error.message} Fields are retained. Playback may have started; Check test status before another request.`);if(draft){el('station-draft-check').hidden=false;el('station-draft-stop').hidden=false;}}
+      finally{draftBusy=false;setBusy();}
+    }
+    function pollDraftSoon(){if(draftPoll)clearTimeout(draftPoll);if(active && draft && !draftStopped){draftPoll=setTimeout(checkDraft,1200);draftPoll.unref?.();}}
+    async function checkDraft(){
+      if(!active || !draft)return;const captured=draft;
+      try {const result=await request(`/api/station-drafts/${encodeURIComponent(captured.id)}`);
+        if(!active || draft!==captured)return;
+        Object.assign(captured,result.draft || {});captured.state=result.draft?.state || captured.state;draftStopped=result.can_save===true;
+        if(!draftOperation && captured.operation_id)draftOperation={operation_id:captured.operation_id};
+        if(captured.observed_playing && draftURL===el('station-url').value.trim())el('station-draft-audible').disabled=false;
+        const op=result.operation || {};const state=op.state || captured.state || 'unknown';
+        if(state==='playing' && draftURL===el('station-url').value.trim())el('station-draft-audible').disabled=false;
+        draftMessage(draftStopped?'Test stopped and confirmed. Confirm you heard the intended station, then Save.':`Test on ${captured.speaker}: ${state}${op.reason?' · '+op.reason:''}. ${state==='playing'?'Listen and confirm the intended sound, then Stop.':'Check before retrying; accepted work does not prove sound.'}`);
+        el('station-draft-stop').hidden=draftStopped;setBusy();if(!draftStopped && !['failed','unknown','canceled','skipped'].includes(state))pollDraftSoon();
+      }catch(error){if(draft===captured)draftMessage(`${error.message} Test outcome unknown. Check again; no automatic test retry.`);}
+    }
+    async function stopDraft(){
+      if(!draft || !draftOperation || draftBusy)return;const captured=draft;draftBusy=true;setBusy();
+      try{await request(`/api/station-drafts/${encodeURIComponent(captured.id)}/stop`,post({speaker_id:captured.speaker_id,operation_id:draftOperation.operation_id}));draftMessage('Stop accepted. Checking for confirmed stopped playback before Save.');await checkDraft();pollDraftSoon();}
+      catch(error){draftMessage(`${error.message} Stop is unconfirmed; Save remains blocked. Check test status.`);}
+      finally{draftBusy=false;setBusy();}
+    }
+    function renderSession(){if(!radioSession)return;const op=radioSession.operation || {};el('stations-session').hidden=false;el('stations-session-status').textContent=op.state==='playing'?`Playing ${radioSession.station.name} on ${radioSession.speaker}. Audibility not verified.`:`${radioSession.station.name} on ${radioSession.speaker}: ${op.state || 'accepted'}${op.reason?' · '+op.reason:''}`;el('stations-session-stop').disabled=radioSession.direct || !radioSession.speaker_id || !op.operation_id;}
+    function pollSessionSoon(){if(sessionPoll)clearTimeout(sessionPoll);if(active && radioSession && !['completed','failed','canceled','skipped','replaced'].includes(radioSession.operation?.state)){sessionPoll=setTimeout(checkSession,1500);sessionPoll.unref?.();}}
+    async function checkSession(){if(!active || !radioSession)return;const captured=radioSession;try{const result=await request(`/api/${encodeURIComponent(captured.speaker)}/operations`);if(!active || radioSession!==captured)return;const op=result.last_outcome || result.operation || result;if(op.operation_id===captured.operation?.operation_id)captured.operation=op;else if(op.operation_id)captured.operation={...captured.operation,state:'replaced',reason:'Another session is current; old Stop cannot stop it.'};renderSession();pollSessionSoon();}catch(error){if(active)message(`${error.message} Check playback before retrying.`);}}
+    async function stopSession(){if(!radioSession || writing)return;const captured=radioSession;writing=true;setBusy();try{const result=await request(`/api/${encodeURIComponent(captured.speaker)}/stations/${encodeURIComponent(captured.station.id)}/stop`,post({speaker_id:captured.speaker_id,operation_id:captured.operation.operation_id}));captured.operation=result.operation;renderSession();pollSessionSoon();}catch(error){message(`${error.message} Stop unconfirmed; check current playback.`);}finally{writing=false;setBusy();}}
+    el('station-draft-test').addEventListener('click',testDraft);
+    el('station-draft-check').addEventListener('click',checkDraft);
+    el('station-draft-stop').addEventListener('click',stopDraft);
+    el('station-draft-audible').addEventListener('change',setBusy);
+    el('station-url').addEventListener('input',()=>{el('station-draft-audible').checked=false;draftStopped=false;setBusy();draftMessage('URL changed. Save requires a test of this URL; Stop any previous test first.');});
+    el('stations-session-check').addEventListener('click',checkSession);
+    el('stations-session-stop').addEventListener('click',stopSession);
+
     el('btn-hub-stations').addEventListener('click', () => open('hub'));
     el('btn-speaker-stations').addEventListener('click', () => open('speaker'));
     el('btn-stations-back').addEventListener('click', () => { close(); deps.back(origin); });
@@ -358,7 +427,7 @@
       if (deps.onStationSelected) deps.onStationSelected(!!el('f-station').value);
       return checkScheduleReadiness();
     });
-    return {open, close, refresh, add, confirm, loadSchedule,
+    return {open, close, refresh, add, confirm, loadSchedule,testDraft,checkDraft,stopDraft,checkSession,stopSession,
       scheduleValue() { return el('f-station').value || null; },
       clearScheduleChoice() { el('f-station').value = ''; if (deps.onStationSelected) deps.onStationSelected(false); },
       onViewChange(view) {

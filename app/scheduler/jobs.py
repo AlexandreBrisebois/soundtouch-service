@@ -1,4 +1,7 @@
 import logging
+import copy
+import hashlib
+import uuid
 import math
 import os
 import json
@@ -37,6 +40,7 @@ _daemon_lock = threading.Lock()
 _config_worker_thread: threading.Thread | None = None
 _scheduler_thread: threading.Thread | None = None
 _queue_lock = threading.Lock()
+_config_lock = threading.RLock()
 _processed_occurrences: set[tuple[str, str, str, str]] = set()
 _occurrence_lock = threading.Lock()
 
@@ -191,6 +195,31 @@ def _normalize_schedule(schedule: Any, speaker_name: str, index: int) -> Schedul
         normalized['source'] = None
     if isinstance(schedule.get('favorite_id'), str) and schedule['favorite_id']:
         normalized['favorite_id'] = schedule['favorite_id']
+    if isinstance(schedule.get('review_reason'), str) and schedule['review_reason']:
+        normalized['review_reason'] = schedule['review_reason']
+        if isinstance(schedule.get('review_token'), str):
+            normalized['review_token'] = schedule['review_token']
+        normalized['paused'] = True
+    explicit_collection = 'collection' in schedule or schedule.get('source_kind') == 'collection'
+    if explicit_collection:
+        from app.core import collections
+        normalized['source_kind'] = 'collection'
+        normalized['preset'], normalized['source'] = None, None
+        normalized['collection'] = copy.deepcopy(schedule.get('collection', {}))
+        try:
+            normalized['collection'] = collections.validate_binding(schedule.get('collection'))
+            binding_id = normalized['collection']['speaker_id']
+            if normalized.get('speaker_id') not in (None, binding_id):
+                raise ValueError('Collection speaker binding is inconsistent.')
+            if schedule.get('source_kind') not in (None, '', 'collection') or schedule.get('station_id') or schedule.get('favorite_id') or schedule.get('source') not in (None, '') or schedule.get('preset') not in (None, ''):
+                raise ValueError('Collection conflicts with another music source.')
+            normalized['speaker_id'] = binding_id
+        except (ValueError, TypeError, KeyError) as exc:
+            normalized['source_error'] = str(exc) or 'Collection unavailable. Replace music.'
+    elif schedule.get('source_kind') not in (None, '', 'station', 'favorite', 'preset', 'aux') or any(key.startswith('collection') for key in schedule):
+        normalized['source_kind'] = str(schedule.get('source_kind') or 'unsupported')
+        normalized['source_error'] = 'Unsupported music source. Replace music.'
+        normalized['preset'], normalized['source'] = None, None
     return normalized
 
 
@@ -282,6 +311,15 @@ def load_config() -> SpeakerSchedules | None:
         logger.error("Error reading config file %s: %s", CONFIG_FILE_PATH, e)
         return None
 
+def schedule_revision(schedule: Schedule) -> str:
+    """Compare the same normalized durable state before and after queueing a move."""
+    normalized = _normalize_schedule(schedule, '', 0)
+    if normalized is None:
+        raise ValueError('The original routine is invalid. Refresh and review it.')
+    return hashlib.sha256(json.dumps(normalized, sort_keys=True,
+                                     separators=(',', ':')).encode()).hexdigest()
+
+
 def config_io_worker() -> None:
     """Background thread to process configuration changes sequentially."""
     logger.info("Started background config writer thread.")
@@ -298,64 +336,101 @@ def config_io_worker() -> None:
             previous_name = mutation.get("previous_name")
             data = mutation.get("data")
             
-            # Read latest from disk
-            config = load_config()
-            if config is None:
-                _log_with_fields(logging.WARNING, "Skipping config mutation: config could not be loaded.")
-                continue
-            
-            if speaker not in config:
-                config[speaker] = []
-                
-            schedules = config[speaker]
-            
-            if action == 'add_update':
-                if data is None:
-                    _log_with_fields(
-                        logging.WARNING,
-                        "Skipping add_update mutation: missing schedule data.",
-                        speaker=speaker,
-                        schedule=schedule_name,
-                    )
+            with _config_lock:
+                # Read latest from disk
+                config = load_config()
+                if config is None:
+                    _log_with_fields(logging.WARNING, "Skipping config mutation: config could not be loaded.")
                     continue
-                # Remove existing with same name if it exists, then append
-                names_to_replace = {schedule_name}
-                if previous_name:
-                    names_to_replace.add(previous_name)
-                schedules = [s for s in schedules if s.get("name") not in names_to_replace]
-                schedules.append(data)
-                config[speaker] = schedules
-                
-            elif action == 'delete':
-                schedules = [s for s in schedules if s.get("name") != schedule_name]
-                if not schedules:
-                    del config[speaker]
-                else:
+
+                if speaker not in config:
+                    config[speaker] = []
+
+                schedules = config[speaker]
+
+                if action == 'move_collection':
+                    origin_speaker = mutation.get('previous_speaker')
+                    originals = [item for item in config.get(origin_speaker or '', [])
+                                 if item['name'] == previous_name]
+                    if (not origin_speaker or origin_speaker == speaker or data is None
+                            or len(originals) != 1 or 'collection' not in originals[0]
+                            or schedule_revision(originals[0]) != mutation.get('expected_origin_revision')
+                            or any(item['name'] == schedule_name for item in schedules)):
+                        _log_with_fields(logging.WARNING, 'Collection move rejected: original changed or target name conflicts.',
+                                         speaker=speaker, schedule=schedule_name)
+                        continue
+                    original = originals[0]
+                    data = copy.deepcopy(data)
+                    if original.get('review_reason') and not (mutation.get('review_confirmed')
+                            and mutation.get('expected_review_token') == original.get('review_token')):
+                        data['paused'], data['review_reason'] = True, original['review_reason']
+                        if original.get('review_token'):
+                            data['review_token'] = original['review_token']
+                    remaining = [item for item in config[origin_speaker] if item['name'] != previous_name]
+                    if remaining:
+                        config[origin_speaker] = remaining
+                    else:
+                        del config[origin_speaker]
+                    config[speaker] = [*schedules, data]
+
+                elif action == 'add_update':
+                    if data is None:
+                        _log_with_fields(
+                            logging.WARNING,
+                            "Skipping add_update mutation: missing schedule data.",
+                            speaker=speaker,
+                            schedule=schedule_name,
+                        )
+                        continue
+                    # A queued edit created before an explicit source mutation cannot clear its pause.
+                    prior = next((item for item in schedules if item['name'] == (previous_name or schedule_name)), None)
+                    if mutation.get('expected_origin_revision') and (prior is None or schedule_revision(prior) != mutation['expected_origin_revision']):
+                        _log_with_fields(logging.WARNING, 'Collection edit rejected: original changed or moved.',
+                                         speaker=speaker, schedule=schedule_name)
+                        continue
+                    if prior and prior.get('review_reason') and not (mutation.get('review_confirmed') and mutation.get('expected_review_token') == prior.get('review_token')):
+                        data = copy.deepcopy(data)
+                        data['review_reason'], data['paused'] = prior['review_reason'], True
+                        if prior.get('review_token'):
+                            data['review_token'] = prior['review_token']
+                    # Remove existing with same name if it exists, then append
+                    names_to_replace = {schedule_name}
+                    if previous_name:
+                        names_to_replace.add(previous_name)
+                    schedules = [s for s in schedules if s.get("name") not in names_to_replace]
+                    schedules.append(data)
                     config[speaker] = schedules
 
-            # -----------------------------------------------------------------
-            # IMPORTANT DOCKER CAVEAT:
-            # We must NOT use `os.replace` if config.json is bind-mounted 
-            # natively as a single file (e.g. `- ./config.json:/workspace/config.json`).
-            # `os.replace` changes the inode, which breaks the Docker volume 
-            # link to the host system.
-            # 
-            # To maintain the data link to the Synology Host, we write directly to the 
-            # opened file object, which truncates and overwrites the existing inode inline. 
-            # -----------------------------------------------------------------
-            _write_config(config)
-            
-            _log_with_fields(
-                logging.INFO,
-                "Applied config mutation.",
-                action=action,
-                speaker=speaker,
-                schedule=schedule_name,
-            )
-            
-            # Update in-memory config
-            global current_config
-            current_config = config
+                elif action == 'delete':
+                    schedules = [s for s in schedules if s.get("name") != schedule_name]
+                    if not schedules:
+                        del config[speaker]
+                    else:
+                        config[speaker] = schedules
+
+                # -----------------------------------------------------------------
+                # IMPORTANT DOCKER CAVEAT:
+                # We must NOT use `os.replace` if config.json is bind-mounted
+                # natively as a single file (e.g. `- ./config.json:/workspace/config.json`).
+                # `os.replace` changes the inode, which breaks the Docker volume
+                # link to the host system.
+                #
+                # To maintain the data link to the Synology Host, we write directly to the
+                # opened file object, which truncates and overwrites the existing inode inline.
+                # -----------------------------------------------------------------
+                _write_config(config)
+
+                _log_with_fields(
+                    logging.INFO,
+                    "Applied config mutation.",
+                    action=action,
+                    speaker=speaker,
+                    schedule=schedule_name,
+                )
+
+                # Update in-memory config
+                global current_config
+                current_config = config
         except Exception as e:
             logger.exception("Error processing config mutation: %s", e)
         finally:
@@ -392,7 +467,22 @@ def queue_on(speaker_name: str, schedule: Schedule, force: bool = False) -> dict
 
 
 def _queue_on_locked(speaker_name: str, schedule: Schedule, force: bool) -> dict[str, Any] | None:
+    if schedule.get('source_error'):
+        return {'state': 'skipped', 'reason': schedule['source_error'], 'terminal': True,
+                'schedule_name': schedule['name']}
     previous = playback.last(speaker_name)
+    collection_key = None
+    if 'collection' in schedule:
+        collection_key = hashlib.sha256(json.dumps({
+            'collection': schedule['collection'], 'speaker_id': schedule.get('speaker_id'),
+            'volume': schedule['volume'], 'force': force,
+            'fade_in_duration': schedule['fade_in_duration'], 'name': schedule['name'],
+        }, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+        if previous and not previous['terminal']:
+            if previous.get('collection_request_key') == collection_key:
+                return previous
+            if force or previous.get('schedule_name') == schedule['name']:
+                raise StationRequestConflict('Another playback request is still pending. Wait and check its outcome before playing this collection.')
     if not force and playback.has_radio(speaker_name, schedule.get('speaker_id')):
         return previous
     if previous and not previous['terminal'] and previous['schedule_name'] == schedule['name']:
@@ -401,7 +491,11 @@ def _queue_on_locked(speaker_name: str, schedule: Schedule, force: bool) -> dict
         return None
     op = playback.begin(speaker_name, schedule['name'], schedule.get('speaker_id'),
                         allow_radio_idle=bool(schedule.get('station_id') and not force))
-    extra = [None, schedule['station_id'], True] if schedule.get('station_id') else ([schedule['favorite_id']] if schedule.get('favorite_id') else [])
+    extra: list[Any] = [None, schedule['station_id'], True] if schedule.get('station_id') else ([schedule['favorite_id']] if schedule.get('favorite_id') else [])
+    if 'collection' in schedule:
+        op['outcome'].update(collection_session=bool(force), speaker_id=schedule.get('speaker_id'),
+                             collection_request_key=collection_key)
+        extra = [None, None, False, schedule['collection']]
     if not submit_background_task(_execute_operation, playback.run_on, op, schedule.get('preset'),
                                   schedule['volume'], schedule.get('source'),
                                   schedule['fade_in_duration'], force, *extra):
@@ -604,6 +698,96 @@ def shutdown_daemon(timeout: float = 3.0) -> None:
         BACKGROUND_WORKER_POOL.shutdown(wait=False, cancel_futures=True)
         BACKGROUND_WORKER_POOL = None
 
+def _source_schedule_matches(config: SpeakerSchedules, speaker_id: str,
+                             source_account: str | None = None,
+                             slot: int | None = None) -> list[tuple[str, Schedule, bool]]:
+    from app.core import discovery, favorites, library
+    matches = []
+    cached: dict[str, set[str]] = {}
+    for device in discovery.get_all_cached_devices():
+        if device.get('name') and device.get('device_id'):
+            cached.setdefault(device['name'], set()).add(device['device_id'])
+    for speaker_name, schedules in config.items():
+        candidates = []
+        for item in schedules:
+            binding = item.get('collection')
+            pinned = item.get('speaker_id') or (binding.get('speaker_id') if isinstance(binding, dict) else None)
+            identities = {pinned} if pinned else cached.get(speaker_name, set())
+            if speaker_id in identities:
+                candidates.append((item, not pinned and len(identities) != 1))
+        if not candidates:
+            continue
+        slots = None
+        for item, unknown in candidates:
+            if slot is not None:
+                affected = 'collection' not in item and not item.get('station_id') and item.get('source') != 'AUX' and item.get('preset', 1) == slot
+            elif source_account is not None:
+                binding = item.get('collection')
+                if binding is not None:
+                    content = binding.get('content') if isinstance(binding, dict) else None
+                    affected = isinstance(content, dict) and content.get('sourceAccount') == source_account
+                elif item.get('favorite_id'):
+                    try:
+                        favorite = favorites.get(item['favorite_id'])
+                        content = favorite.get('content')
+                        if not isinstance(content, dict):
+                            raise ValueError('Favorite content identity unavailable.')
+                        affected = content.get('sourceAccount') == source_account
+                    except (ValueError, KeyError, TypeError):
+                        # An unresolved binding cannot suppress other known impacts.
+                        affected, unknown = True, True
+                elif item.get('station_id') or item.get('source') == 'AUX':
+                    affected = False
+                else:
+                    if slots is None:
+                        try:
+                            found = favorites.device(speaker_name, speaker_id)
+                            slots = library.read_presets(found['ip'])
+                        except (ValueError, KeyError, TypeError):
+                            slots = {}
+                    content = slots.get(item.get('preset') or 1)
+                    if content is None and len(slots) != 6:
+                        affected, unknown = True, True
+                    else:
+                        affected = bool(content and content.get('sourceAccount') == source_account)
+            else:
+                affected = True
+            if affected:
+                matches.append((speaker_name, item, unknown))
+    return matches
+
+
+def source_schedule_impacts(speaker_id: str, source_account: str | None = None,
+                            slot: int | None = None) -> list[dict[str, Any]]:
+    with _config_lock:
+        return [{'speaker': speaker, 'name': item['name'], 'paused': item['paused'],
+                 'review_reason': item.get('review_reason'), 'impact_unknown': unknown}
+                for speaker, item, unknown in _source_schedule_matches(get_current_config(), speaker_id,
+                                                              source_account, slot)]
+
+
+def pause_source_schedules(speaker_id: str, source_account: str | None = None,
+                           slot: int | None = None,
+                           reason: str = 'library_removed') -> list[dict[str, Any]]:
+    """Durably pause before a destructive source/button mutation may proceed."""
+    global current_config
+    with _config_lock:
+        config = load_config()
+        if config is None:
+            raise ValueError('Schedule state could not be read. No source change is safe.')
+        affected = _source_schedule_matches(config, speaker_id, source_account, slot)
+        if not affected:
+            return []
+        for _, item, unknown in affected:
+            item['paused'], item['review_reason'] = True, reason + (':source_identity_unavailable' if unknown else '')
+            item['review_token'] = uuid.uuid4().hex
+        _write_config(config)
+        current_config = config
+        return [{'speaker': speaker, 'name': item['name'], 'paused': True,
+                 'review_reason': item['review_reason'], 'impact_unknown': unknown}
+                for speaker, item, unknown in affected]
+
+
 def get_current_config() -> SpeakerSchedules:
     global current_config
     if not current_config:
@@ -621,13 +805,15 @@ class StationWorkerUnavailable(RuntimeError):
 
 
 def _pending_station_request(previous: dict[str, Any] | None, station_id: str,
-                             speaker_id: str, volume: int, intent: str) -> dict[str, Any] | None:
+                             speaker_id: str, volume: int, intent: str, *,
+                             stoppable: bool | None = None) -> dict[str, Any] | None:
     if not previous or previous['terminal'] or previous.get('radio_request_intent') is None:
         return None
     if (previous.get('station_id') == station_id
             and previous.get('speaker_id') == speaker_id
             and previous.get('target_volume') == volume
-            and previous.get('radio_request_intent') == intent):
+            and previous.get('radio_request_intent') == intent
+            and (stoppable is None or bool(previous.get('listening_session')) == stoppable)):
         return previous
     raise StationRequestConflict(
         'Another radio request is still starting or stopping on this speaker. '
@@ -635,20 +821,22 @@ def _pending_station_request(previous: dict[str, Any] | None, station_id: str,
 
 
 def queue_station(speaker_name: str, speaker_id: str, station_id: str,
-                  volume: int = 5, *, listening: bool = False) -> dict[str, Any] | None:
+                  volume: int = 5, *, listening: bool = False,
+                  stoppable: bool = False) -> dict[str, Any] | None:
     """Manual station play shares cancellation/serialization with routines."""
     with _queue_lock:
         name = 'Station ' + station_id
         previous = playback.last(speaker_name)
         intent = 'listening' if listening else 'quiet_test'
-        pending = _pending_station_request(previous, station_id, speaker_id, volume, intent)
+        pending = _pending_station_request(previous, station_id, speaker_id, volume, intent,
+                                           stoppable=bool(listening or stoppable))
         if pending is not None:
             return pending
         if BACKGROUND_WORKER_POOL is None:
             return None
         op = playback.begin(speaker_name, name, speaker_id)
         op['outcome'].update(station_id=station_id, speaker_id=speaker_id,
-                             listening_session=listening, target_volume=volume,
+                             listening_session=bool(listening or stoppable), target_volume=volume,
                              radio_request_intent=intent)
         if not submit_background_task(_execute_operation, playback.run_on, op, None, volume, None, 2, True, None, station_id):
             playback.finish(op, 'failed', 'worker_unavailable')
@@ -706,6 +894,25 @@ def queue_station_stop(speaker_name: str, speaker_id: str, station_id: str,
             raise StationWorkerUnavailable
         try:
             op = playback.begin_station_stop(speaker_name, speaker_id, station_id, operation_id)
+            if op is None:
+                return None
+            holder['operation'] = op
+            return dict(op['outcome'])
+        finally:
+            ready.set()
+
+
+def queue_collection_stop(speaker_name: str, speaker_id: str,
+                          operation_id: str) -> dict[str, Any] | None:
+    with _queue_lock:
+        if BACKGROUND_WORKER_POOL is None:
+            raise StationWorkerUnavailable
+        ready = threading.Event()
+        holder: dict[str, playback.Operation] = {}
+        if not submit_background_task(_run_reserved_station_stop, ready, holder):
+            raise StationWorkerUnavailable
+        try:
+            op = playback.begin_collection_stop(speaker_name, speaker_id, operation_id)
             if op is None:
                 return None
             holder['operation'] = op

@@ -108,7 +108,7 @@
     function renderSources() {
       const list = el('preset-sources'); clear(list);
       const sources = data.sources || [];
-      if (!sources.length) list.append(text('p', 'No registered NAS music source was reported by this speaker. Wisp does not register or change your NAS service.', 'preset-help'));
+      if (!sources.length) list.append(text('p', 'No registered NAS music source was reported by this speaker. Open Music > Music Libraries to Add a library or Check Again.', 'preset-help'));
       sources.forEach(item => list.append(button(item.name + (item.ready ? '' : ' · unavailable'), () => {
         source = item; stack = []; el('preset-browser').hidden = true; browse(null, 1);
       }, !item.ready)));

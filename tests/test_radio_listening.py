@@ -152,7 +152,7 @@ def test_quiet_test_remains_fixed_volume_without_listening_intent(client, monkey
     calls = []
     monkeypatch.setattr(jobs, 'queue_station', lambda *a, **kw: calls.append((a, kw)) or {})
     assert client.post('/api/Room/stations/id/test', json={'confirmed': True, 'volume': 90}).status_code == 202
-    assert calls == [(('Room', 'ABC', 'id', 5), {'listening': False})]
+    assert calls == [(('Room', 'ABC', 'id', 5), {'listening': False, 'stoppable': True})]
 
 
 def test_pending_quiet_test_then_normal_play_returns_conflict(client, monkeypatch):

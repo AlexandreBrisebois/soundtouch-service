@@ -3,22 +3,27 @@
 Save a speaker-visible NAS folder or playlist on one of the speaker's six physical
 buttons, then select that saved favorite in a routine. Radio uses Wisp's separate
 Play and Schedule actions and is never assigned to a new physical preset. This is
-a local-only feature. It does not register music accounts, mount NAS shares,
-change DNS/firmware, or introduce multiroom playback.
+a local-only feature. Music > Music Libraries now provides explicit native NAS
+Add/Remove; this preset workflow does not register sources automatically. Wisp
+does not mount shares, change DNS/firmware, replace Bose/Marge services or
+introduce multiroom playback.
 
 ## Before changing a button
 
 1. Open **Presets & favorites** for the intended speaker. Record its current six
    buttons. Existing NAS buttons do not need to be rewritten merely to keep using
    existing routines.
-2. Browse a NAS source already registered and READY on that speaker. Wisp offers
-   only folders/playlists that the speaker marks playable and preset-capable.
+2. Use **Music > Music Libraries** to discover a NAS through speakers and explicitly
+   Add it if needed. Browse through a speaker with a registered, Ready source.
+   Inspection does not play. Play/Schedule require a playable folder/playlist;
+   Assign additionally requires preset capability reported by the chosen speaker.
    It preserves opaque source-account and location values. A filesystem path or
    arbitrary DLNA ID is not interchangeable with a SoundTouch content location.
 3. Choose a name and button. Review the existing assignment in the preview.
    Cancel leaves the speaker unchanged. Confirm is an explicit physical-button
-   write; any current Wisp automation fade is canceled first. It does not start
-   music. The other five buttons must be unchanged in fresh readback.
+   write; affected bound-favorite and legacy slot routines are durably paused for
+   review before replacement, and current automation fades are canceled. It does
+   not start music. The other five buttons must be unchanged in fresh readback.
 4. A matched readback is not proof of sound. Use the explicit quiet test (volume
    5), then press the actual physical button. Test a short routine separately.
    A timeout or ambiguous readback is **unknown**, never success. Inspect before
@@ -26,14 +31,18 @@ change DNS/firmware, or introduce multiroom playback.
 5. In a routine, choose the saved favorite. It pins the speaker ID, button and
    intended content. If the source disappears or another app changes that button,
    Wisp does not play the replacement content. Existing unbound preset routines
-   keep their old behavior. Scheduled OFF still stops whatever is playing.
+   keep their old behavior unless an explicit replacement pauses that button's
+   routines for review. Scheduled OFF retains its existing semantics.
 
-Preview/browse selections expire after 15 minutes or a restart. Refresh and choose
+Preset preview/browse selections expire after 15 minutes or a restart. Direct
+collection schedules retain their own durable binding and do not depend on
+these tokens. Refresh and choose
 again. A competing edit on any button invalidates a preview. Identical content
 already assigned to another button is refused because some firmware moves it and
 clears the original slot. New successful assignments supersede earlier Wisp
-favorites on that button; existing schedules referencing them will stop safely
-rather than silently follow the replacement.
+favorites on that button. Dependent bound-favorite and legacy button schedules
+are paused before replacement and remain paused after an uncertain result until
+explicit review/re-enable. Direct collection schedules are unaffected.
 
 ## Radio readiness and limitations
 
@@ -182,3 +191,30 @@ sound, and seeding does not mark stations ready or fetch their streams. Playback
 and scheduling remain separate, explicit actions. Broadcasters
 may change URLs; manually add a replacement rather than silently rewriting saved
 sources. Editing the bundled seed does not change a previously seeded library.
+
+
+## Shared Music workflow
+
+Use **Music > Music Libraries** to inspect shared folders/playlists before
+choosing Play, Schedule or Assign. Row taps inspect; tracks are inspect-only in
+this version. These actions check the selected speaker's registration and content
+access independently. The existing six-slot current/Empty display and preset
+plan/readback workflow are reused. Assignment never starts playback.
+
+Replacing a button warns about bound-favorite and legacy slot schedules, then
+durably pauses them for review before issuing a write. If a write is uncertain,
+they stay paused. Direct collection schedules do not depend on buttons.
+
+- [Native library discovery, explicit Add/Remove and recovery](music-libraries.md)
+- [Direct collection schedules, review pauses and rollback](collection-schedules.md)
+- [Test a station draft, confirm audible sound, Stop, then Save](radio-drafts.md)
+
+Temporary unavailability retains a library and skips a due collection ON with a
+reason. It does not pause/delete the schedule, substitute another source or
+catch up late. Startup/Check Again can restore observed Ready; missing
+registration requires explicit Add Again. Removal/replacement review pauses
+remain until reviewed and explicitly re-enabled, even if the source recovers.
+
+The above-dock collection action area is a layout trial. Synthetic/offline
+software evidence is separate from actual phone thumb-reach, real playlist,
+physical-button and audible qualification. Those checks remain pending.

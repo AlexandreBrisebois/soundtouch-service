@@ -6,7 +6,10 @@ from flask import Flask
 from flasgger import Swagger
 from app.api.routes import api_bp
 from app.api.favorites import favorites_bp
-from app.core import discovery, speaker_cache
+from app.api.collections import collections_bp
+from app.api.music_libraries import music_libraries_bp
+from app.api.station_drafts import station_drafts_bp
+from app.core import discovery, speaker_cache, music_libraries
 from app.scheduler import jobs
 
 
@@ -59,12 +62,17 @@ def create_app():
     
     app_instance.register_blueprint(api_bp)
     app_instance.register_blueprint(favorites_bp)
+    app_instance.register_blueprint(collections_bp)
+    app_instance.register_blueprint(music_libraries_bp)
+    app_instance.register_blueprint(station_drafts_bp)
     
     # Start the background dynamic scheduler as a daemon thread
     jobs.start_daemon()
     
     # Refresh the discovery cache immediately and attach listeners for newly found speakers.
     discovery.start_device_cache(on_refresh=speaker_cache.start_ws_listeners)
+    # Read registration observations after the initial discovery; never re-add sources.
+    jobs.submit_background_task(music_libraries.check_all)
     
     return app_instance
 

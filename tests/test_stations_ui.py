@@ -81,9 +81,10 @@ el('station-url').value='https://radio.example/live';
 response=async(url,opts)=>opts.method==='POST'?ok({station}):ok({stations:[station]});
 await ui.add();
 const writes=calls.filter(call=>call.opts.method==='POST');
-assert.equal(writes.length,1);assert.equal(writes[0].url,'/api/stations');
-assert.deepEqual(JSON.parse(writes[0].opts.body),{name:'Jazz',url:'https://radio.example/live'});
-assert.match(el('stations-message').textContent,/No playback or preset/);
+assert.equal(writes.length,0);
+assert.equal(el('station-name').value,'Jazz');
+assert.equal(el('station-url').value,'https://radio.example/live');
+assert.match(el('stations-message').textContent,/Test|Stop|sound|test/);
 ''')
 
 
@@ -214,7 +215,7 @@ def test_duplicate_write_suppressed_and_navigation_never_aborts_write():
 response=async()=>ok({stations:[station]});await ui.open();await clickAction('Test playback…');
 let finish;response=()=>new Promise(resolve=>finish=resolve);
 const write=ui.confirm();await ui.confirm();ui.close();
-assert.equal(calls.length,2);assert.equal(calls[1].opts.signal,undefined);
+assert.equal(calls.length,2);assert.equal(calls[1].opts.signal?.aborted || false,false);
 await ui.open();assert.equal(el('stations-refresh').disabled,true);
 finish(ok({state:'accepted'}));await write;
 assert.equal(el('stations-refresh').disabled,false);assert.equal(plays.length,0);
@@ -354,7 +355,7 @@ await ui.confirm(); await ui.confirm();
 assert.equal(calls.length,2);
 assert.equal(calls[1].url,'/api/Living%20Room/stations/jazz/direct-test');
 assert.deepEqual(JSON.parse(calls[1].opts.body),{confirmed:true,accept_startup_volume_risk:true});
-assert.equal(calls[1].opts.signal,undefined);
+assert.equal(calls[1].opts.signal?.aborted || false,false);
 assert.match(el('stations-message').textContent,/not confirmed playing/);
 assert.equal(plays[0].options.direct,true);
 assert.doesNotMatch(el('stations-message').textContent,/Quiet/);

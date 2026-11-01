@@ -224,6 +224,85 @@ def begin_station_stop(speaker: str, device_id: str, station_id: str,
         return op
 
 
+def begin_collection_stop(speaker: str, device_id: str,
+                          operation_id: str) -> Operation | None:
+    """Transfer only the exact manually started collection owner to STOP."""
+    from app.core import radio_relay
+    with _lock:
+        previous = _operations.get(speaker)
+        if (previous is None or not current(previous) or previous['device_id'] != device_id
+                or previous['outcome'].get('operation_id') != operation_id
+                or previous['outcome'].get('collection_session') is not True
+                or previous['outcome']['state'] != 'playing' or not previous['expected']
+                or radio_relay.for_device(device_id) is not None):
+            return None
+        expected = previous['expected']
+        op = begin(speaker, previous['outcome']['schedule_name'], device_id)
+        op['expected'] = expected
+        op['mode'] = 'listening_stop'
+        op['outcome'].update(collection_session=True, speaker_id=device_id,
+                             radio_mode='native', stops_operation_id=operation_id)
+        return op
+
+
+def _reconcile_native_session(speaker: str, device_id: str, operation_id: str,
+                              station_id: str | None = None) -> bool:
+    """Explicit fresh checking can recover an exact unknown native start, never replay it."""
+    from app.core import radio_relay
+    with _lock:
+        op = _operations.get(speaker)
+        def eligible() -> bool:
+            return bool(op is not None and current(op) and op['device_id'] == device_id
+                        and _device_owners.get(device_id) is op and op['mode'] == 'on'
+                        and op['outcome'].get('operation_id') == operation_id
+                        and op['outcome']['state'] == 'unknown'
+                        and op['outcome'].get('in_flight') is not True and op['expected']
+                        and (op['outcome'].get('station_id') == station_id
+                             and op['outcome'].get('listening_session') is True
+                             and op['outcome'].get('radio_mode') == 'native'
+                             if station_id is not None
+                             else op['outcome'].get('collection_session') is True))
+        if not eligible():
+            return False
+        assert op is not None
+        mutex = _write_locks.setdefault(device_id, threading.RLock())
+    with mutex:
+        with _lock:
+            if not eligible() or radio_relay.for_device(device_id) is not None:
+                return False
+        found = discovery.resolve_device(speaker, device_id)
+        if not found or found.get('device_id') != device_id:
+            return False
+        if status.get_device_id(found['ip'], timeout=3) != device_id:
+            return False
+        started = time.time()
+        observed = status.get_now_playing(found['ip'], timeout=3)
+        observed_at = observed.get('observed_at')
+        if (observed.get('device_id') != device_id
+                or observed.get('status', '').upper() != 'PLAYING'
+                or isinstance(observed_at, bool) or not isinstance(observed_at, (int, float))
+                or not started <= observed_at <= time.time()
+                or not matches(op['expected'] or {}, observed)):
+            return False
+        with _lock:
+            if not eligible() or radio_relay.for_device(device_id) is not None:
+                return False
+            op['outcome'].update(state='playing', reason='speaker_reported_playing_after_check',
+                                 updated_at=time.time(), observed_at=observed_at,
+                                 terminal=True, audible_confirmed=False)
+            return True
+
+
+def reconcile_station_session(speaker: str, device_id: str, station_id: str,
+                              operation_id: str) -> bool:
+    return _reconcile_native_session(speaker, device_id, operation_id, station_id)
+
+
+def reconcile_collection_session(speaker: str, device_id: str,
+                                 operation_id: str) -> bool:
+    return _reconcile_native_session(speaker, device_id, operation_id)
+
+
 def run_station_stop(op: Operation) -> None:
     """Explicit radio STOP, never the generic power-toggle OFF path."""
     if not current(op):
@@ -701,7 +780,7 @@ def _volume(op: Operation, value: int) -> bool:
 
 
 def run_on(op: Operation, preset: int | None, volume: int, source: str | None = None,
-           fade_in_duration: float = 300, force: bool = False, favorite_id: str | None = None, station_id: str | None = None, allow_archived_station: bool = False) -> None:
+           fade_in_duration: float = 300, force: bool = False, favorite_id: str | None = None, station_id: str | None = None, allow_archived_station: bool = False, collection: dict[str, Any] | None = None) -> None:
     if not current(op):
         return
     finish(op, 'starting', 'checking_speaker')
@@ -719,7 +798,21 @@ def run_on(op: Operation, preset: int | None, volume: int, source: str | None = 
     if ip is None:
         return
     expected: status.ContentIdentity | dict[str, str] | None
-    if station_id:
+    collection_content = None
+    if collection is not None:
+        from app.core import collections
+        try:
+            if station_id or favorite_id or source is not None or preset is not None:
+                raise ValueError('Conflicting collection music source.')
+            if collection.get('speaker_id') != op['device_id']:
+                raise ValueError('Collection speaker identity changed.')
+            collection_content = collections.resolve(collection, op['speaker'])
+            expected = {key: collection_content[key] for key in ('source', 'sourceAccount', 'location', 'type') if collection_content.get(key)}
+            op['outcome'].update(source_kind='collection')
+        except (ValueError, KeyError, TypeError) as exc:
+            finish(op, 'skipped', 'collection_unavailable: ' + str(exc))
+            return
+    elif station_id:
         from app.core import favorites, library, radio_relay, relay_playback
         try:
             saved = favorites.station(station_id, allow_removed=allow_archived_station)
@@ -786,7 +879,7 @@ def run_on(op: Operation, preset: int | None, volume: int, source: str | None = 
         return
     # PRESET and AUX keys request the intended source directly, avoiding a POWER
     # toggle that could resume the wrong source. Firmware behavior is qualified separately.
-    selected = _write(op, lambda ip: control.select_content(ip, station_content, timeout=_budget(op, 3.0)) if station_id else control.send_key(ip, 'AUX_INPUT', timeout=_budget(op, 3.0)) if source == 'AUX'
+    selected = _write(op, lambda ip: control.select_content(ip, collection_content, timeout=_budget(op, 3.0)) if collection_content is not None else control.select_content(ip, station_content, timeout=_budget(op, 3.0)) if station_id else control.send_key(ip, 'AUX_INPUT', timeout=_budget(op, 3.0)) if source == 'AUX'
                       else control.play_preset(ip, preset or 1, timeout=_budget(op, 3.0)))
     if not selected:
         return

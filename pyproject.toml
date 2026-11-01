@@ -36,5 +36,11 @@ files = [
   "app/core/discovery.py",
   "app/api/routes.py",
   "app/scheduler/jobs.py",
+  "app/core/collections.py",
+  "app/core/music_libraries.py",
+  "app/core/station_drafts.py",
+  "app/api/collections.py",
+  "app/api/music_libraries.py",
+  "app/api/station_drafts.py",
 ]
 

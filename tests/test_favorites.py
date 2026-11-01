@@ -17,6 +17,9 @@ ITEM = {'source': 'STORED_MUSIC', 'sourceAccount': ACCOUNT, 'location': 'opaque-
 
 @pytest.fixture
 def rig(monkeypatch, tmp_path):
+    from app.scheduler import jobs
+    monkeypatch.setattr(jobs, 'CONFIG_FILE_PATH', tmp_path / 'config.json')
+    monkeypatch.setattr(jobs, 'current_config', {})
     monkeypatch.setenv('FAVORITES_FILE', str(tmp_path / 'favorites.json'))
     monkeypatch.delenv('WISP_BASE_URL', raising=False)
     monkeypatch.delenv('WISP_RADIO_ALLOWED_HOSTS', raising=False)
@@ -336,8 +339,9 @@ def test_station_add_and_remove_require_json_and_confirmation(rig):
     app.register_blueprint(favorites_bp)
     client = app.test_client()
     result = client.post('/api/stations', json={'name': 'Radio', 'url': 'https://radio.example/live'})
-    assert result.status_code == 201
-    id = result.json['station']['id']
+    assert result.status_code == 400
+    assert 'Test' in result.json['error']
+    id = favorites.add_station('Radio', 'https://radio.example/live')['id']
     assert client.delete('/api/stations/' + id, json={}).status_code == 400
     assert len(client.get('/api/stations').json['stations']) == 1
     assert client.delete('/api/stations/' + id, json={'confirmed': True}).status_code == 200
